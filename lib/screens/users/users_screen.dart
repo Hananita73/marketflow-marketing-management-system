@@ -187,10 +187,6 @@ class _UsersScreenState extends State<UsersScreen>
     }
   }
 
-  int get _totalUsers => _users.length;
-  int get _activeUsers =>
-      _users.where((u) => u.status == UserStatus.active).length;
-  int get _admins => _users.where((u) => u.role == 'admin').length;
   int get _pending =>
       _users.where((u) => u.status == UserStatus.pending).length;
 
@@ -240,6 +236,7 @@ class _UsersScreenState extends State<UsersScreen>
     final nameCtrl = TextEditingController();
     final emailCtrl = TextEditingController();
     final deptCtrl = TextEditingController();
+    final passwordCtrl = TextEditingController();
     String role = 'Marketing Staff';
     String status = 'Pending';
     final formKey = GlobalKey<FormState>();
@@ -293,6 +290,20 @@ class _UsersScreenState extends State<UsersScreen>
                           validator: InputValidators.email,
                         ),
                         const SizedBox(height: 14),
+                        CustomTextField(
+                          controller: passwordCtrl,
+                          label: 'Temporary Password *',
+                          hint: 'At least 8 characters',
+                          helperText:
+                              'Share this password securely with the user.',
+                          prefixIcon: Icons.lock_outline_rounded,
+                          obscureText: true,
+                          validator: (value) =>
+                              value == null || value.length < 8
+                              ? 'Use at least 8 characters'
+                              : null,
+                        ),
+                        const SizedBox(height: 14),
                         _dropdownField(
                           ctx,
                           'Role *',
@@ -325,7 +336,7 @@ class _UsersScreenState extends State<UsersScreen>
                             ),
                             const SizedBox(width: 8),
                             CustomButton(
-                              text: 'Send Invitation',
+                              text: 'Create User',
                               fullWidth: false,
                               size: ButtonSize.small,
                               prefixIcon: Icons.send_rounded,
@@ -339,6 +350,7 @@ class _UsersScreenState extends State<UsersScreen>
                                   await AuthService().adminCreateUser(
                                     email: emailCtrl.text.trim(),
                                     fullName: nameCtrl.text.trim(),
+                                    password: passwordCtrl.text,
                                     department: deptCtrl.text.trim().isEmpty
                                         ? 'General'
                                         : deptCtrl.text.trim(),
@@ -347,35 +359,11 @@ class _UsersScreenState extends State<UsersScreen>
                                   );
                                   Navigator.pop(ctx);
                                   _snack(
-                                    'Invitation sent to ${nameCtrl.text.trim()}',
+                                    'User ${nameCtrl.text.trim()} created.',
                                   );
                                   _loadUsers(); // refresh list from Supabase
-                                } on AppAuthException catch (e) {
-                                  // Edge Function not deployed � add locally as fallback
-                                  final newUser = AppUser(
-                                    id: 'u${DateTime.now().millisecondsSinceEpoch}',
-                                    fullName: nameCtrl.text.trim(),
-                                    email: emailCtrl.text.trim(),
-                                    role: role,
-                                    department: deptCtrl.text.trim().isEmpty
-                                        ? 'General'
-                                        : deptCtrl.text.trim(),
-                                    status: status == 'Active'
-                                        ? UserStatus.active
-                                        : UserStatus.pending,
-                                    lastActive: 'Never',
-                                    accountCreated: 'Aug 24, 2026',
-                                  );
-                                  setState(() {
-                                    _users.add(newUser);
-                                    UserRoleRepository.addUser(newUser);
-                                  });
-                                  Navigator.pop(ctx);
-                                  _snack(
-                                    '${newUser.fullName} added locally � ${e.message}',
-                                  );
                                 } catch (e) {
-                                  Navigator.pop(ctx);
+                                  if (!ctx.mounted) return;
                                   _snack(
                                     'Failed to create user: $e',
                                     icon: Icons.error_outline_rounded,
@@ -395,7 +383,12 @@ class _UsersScreenState extends State<UsersScreen>
           );
         },
       ),
-    );
+    ).whenComplete(() {
+      nameCtrl.dispose();
+      emailCtrl.dispose();
+      deptCtrl.dispose();
+      passwordCtrl.dispose();
+    });
   }
 
   // -- view user dialog ------------------------------------------------------
@@ -543,6 +536,7 @@ class _UsersScreenState extends State<UsersScreen>
     final nameCtrl = TextEditingController(text: user.fullName);
     final emailCtrl = TextEditingController(text: user.email);
     final deptCtrl = TextEditingController(text: user.department);
+    final passwordCtrl = TextEditingController();
     String role = user.roleDisplayName;
     final formKey = GlobalKey<FormState>();
     final roles = _roleDisplayNames;
@@ -608,6 +602,20 @@ class _UsersScreenState extends State<UsersScreen>
                           hint: 'e.g. Marketing',
                           prefixIcon: Icons.business_outlined,
                         ),
+                        const SizedBox(height: 14),
+                        CustomTextField(
+                          controller: passwordCtrl,
+                          label: 'New Password (optional)',
+                          hint: 'Leave blank to keep the current password',
+                          prefixIcon: Icons.lock_outline_rounded,
+                          obscureText: true,
+                          validator: (value) =>
+                              value != null &&
+                                  value.isNotEmpty &&
+                                  value.length < 8
+                              ? 'Use at least 8 characters'
+                              : null,
+                        ),
                         const SizedBox(height: 24),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
@@ -645,6 +653,22 @@ class _UsersScreenState extends State<UsersScreen>
                                         ? deptCtrl.text.trim()
                                         : user.department,
                                   );
+                                  if (passwordCtrl.text.isNotEmpty) {
+                                    try {
+                                      await AuthService()
+                                          .adminUpdateUserPassword(
+                                            userId: user.id,
+                                            password: passwordCtrl.text,
+                                          );
+                                    } catch (e) {
+                                      _snack(
+                                        'Profile saved, but password update failed: $e',
+                                        icon: Icons.error_outline_rounded,
+                                        color: AppColors.danger,
+                                      );
+                                      return;
+                                    }
+                                  }
                                   if (roleChanged) {
                                     AuditLogService.log(
                                       action: 'role_change',
@@ -773,6 +797,14 @@ class _UsersScreenState extends State<UsersScreen>
 
   // -- delete user -----------------------------------------------------------
   void _confirmDelete(AppUser user) {
+    if (user.id == AuthService().currentUser?.id) {
+      _snack(
+        'You cannot delete your own account.',
+        icon: Icons.error_outline_rounded,
+        color: AppColors.danger,
+      );
+      return;
+    }
     showDialog(
       context: context,
       builder: (ctx) {
@@ -819,22 +851,24 @@ class _UsersScreenState extends State<UsersScreen>
             ),
             TextButton(
               onPressed: () async {
-                // Soft-delete: deactivate in Supabase, remove from local list.
                 try {
-                  await AuthService().updateUserProfile(
-                    userId: user.id,
-                    status: 'deactivated',
+                  await AuthService().adminDeleteUser(userId: user.id);
+                  if (!mounted) return;
+                  setState(() => _users.removeWhere((u) => u.id == user.id));
+                  Navigator.pop(ctx);
+                  _snack(
+                    '${user.fullName} deleted',
+                    icon: Icons.delete_rounded,
+                    color: AppColors.danger,
                   );
-                } catch (_) {
-                  // Continue with local removal even if Supabase update fails.
+                } catch (e) {
+                  if (!mounted) return;
+                  _snack(
+                    'Could not delete user: $e',
+                    icon: Icons.error_outline_rounded,
+                    color: AppColors.danger,
+                  );
                 }
-                setState(() => _users.removeWhere((u) => u.id == user.id));
-                Navigator.pop(ctx);
-                _snack(
-                  '${user.fullName} deleted',
-                  icon: Icons.delete_rounded,
-                  color: AppColors.danger,
-                );
               },
               style: TextButton.styleFrom(foregroundColor: AppColors.danger),
               child: const Text('Delete'),
@@ -1155,8 +1189,6 @@ class _UsersScreenState extends State<UsersScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildKpiRow(),
-                const SizedBox(height: AppConstants.sectionSpacing),
                 _buildTabBar(),
                 const SizedBox(height: 16),
                 _buildTabContent(),
@@ -1168,77 +1200,61 @@ class _UsersScreenState extends State<UsersScreen>
     );
   }
 
-  // -- KPI row ---------------------------------------------------------------
-  Widget _buildKpiRow() {
-    final kpis = [
-      _KpiData(
-        'Total Users',
-        '$_totalUsers',
-        Icons.group_outlined,
-        AppColors.primary,
-      ),
-      _KpiData(
-        'Active Users',
-        '$_activeUsers',
-        Icons.check_circle_outline,
-        AppColors.success,
-      ),
-      _KpiData(
-        'Administrators',
-        '$_admins',
-        Icons.admin_panel_settings_outlined,
-        AppColors.info,
-      ),
-      _KpiData(
-        'Pending Invitations',
-        '$_pending',
-        Icons.schedule_outlined,
-        AppColors.warning,
-      ),
-    ];
-    return LayoutBuilder(
-      builder: (ctx, c) {
-        final cols = c.maxWidth >= 800 ? 4 : (c.maxWidth >= 500 ? 2 : 1);
-        final w = (c.maxWidth - (cols - 1) * AppConstants.itemSpacing) / cols;
-        return Wrap(
-          spacing: AppConstants.itemSpacing,
-          runSpacing: AppConstants.itemSpacing,
-          children: kpis
-              .map(
-                (k) => SizedBox(
-                  width: w,
-                  child: _KpiCard(data: k),
-                ),
-              )
-              .toList(),
-        );
-      },
-    );
-  }
-
   // -- tab bar ---------------------------------------------------------------
   Widget _buildTabBar() {
     final br = Theme.of(context).brightness;
-    final surfColor = AppTheme.surfaceColor(br);
-    final borderColor = AppTheme.border(br);
+    final isDark = br == Brightness.dark;
+    final bgColor = isDark
+        ? const Color(0xFF1C1A27)
+        : AppColors.primaryLighter;
+    final borderColor = isDark
+        ? const Color(0xFF312E47)
+        : AppColors.primaryLight;
     return Container(
+      padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: surfColor,
-        borderRadius: BorderRadius.circular(AppConstants.radiusLarge),
-        border: Border.all(color: borderColor),
+        color: bgColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: isDark ? 0.18 : 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: TabBar(
         controller: _tab,
-        labelColor: AppColors.primary,
-        unselectedLabelColor: AppTheme.textSecondary(br),
+        labelColor: Colors.white,
+        unselectedLabelColor: isDark
+            ? const Color(0xFF9E9BB5)
+            : AppColors.primary.withValues(alpha: 0.55),
+        labelStyle: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.2,
+        ),
+        unselectedLabelStyle: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+        ),
         indicatorSize: TabBarIndicatorSize.tab,
         indicator: BoxDecoration(
-          color: AppColors.primaryLight.withValues(
-            alpha: br == Brightness.dark ? 0.18 : 1.0,
-          ),
-          borderRadius: BorderRadius.circular(AppConstants.radiusLarge),
+          color: AppColors.primary,
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.primary.withValues(alpha: 0.35),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
+        indicatorPadding: EdgeInsets.zero,
         dividerColor: Colors.transparent,
+        splashFactory: NoSplash.splashFactory,
+        overlayColor: WidgetStateProperty.all(Colors.transparent),
         tabs: const [
           Tab(text: 'User Management'),
           Tab(text: 'Roles & Permissions'),
@@ -1986,74 +2002,6 @@ class _UsersPageHeaderBar extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-}
-
-// -----------------------------------------------------------------------------
-// _KpiData + _KpiCard
-// -----------------------------------------------------------------------------
-
-class _KpiData {
-  final String label, value;
-  final IconData icon;
-  final Color color;
-  const _KpiData(this.label, this.value, this.icon, this.color);
-}
-
-class _KpiCard extends StatelessWidget {
-  final _KpiData data;
-  const _KpiCard({required this.data});
-
-  @override
-  Widget build(BuildContext context) {
-    final br = Theme.of(context).brightness;
-    final surfColor = AppTheme.surfaceColor(br);
-    final borderColor = AppTheme.border(br);
-    final textPrimary = AppTheme.textPrimary(br);
-    final textSec = AppTheme.textSecondary(br);
-
-    return Container(
-      padding: const EdgeInsets.all(AppConstants.cardPadding),
-      decoration: BoxDecoration(
-        color: surfColor,
-        borderRadius: BorderRadius.circular(AppConstants.radiusLarge),
-        border: Border.all(color: borderColor),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: data.color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
-            ),
-            child: Icon(data.icon, size: 22, color: data.color),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  data.value,
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
-                    color: textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  data.label,
-                  style: TextStyle(fontSize: 12, color: textSec),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

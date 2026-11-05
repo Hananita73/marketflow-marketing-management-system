@@ -258,6 +258,7 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen>
     final department = TextEditingController(
       text: existing?['department']?.toString(),
     );
+    final password = TextEditingController();
     final formKey = GlobalKey<FormState>();
     var role =
         existing?['role']?.toString() ?? (_roles.firstOrNull?.key ?? 'admin');
@@ -294,6 +295,24 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen>
                         labelText: 'Email address',
                       ),
                       validator: InputValidators.email,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: password,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: isNew
+                            ? 'Temporary password'
+                            : 'New password (optional)',
+                        helperText: isNew
+                            ? 'At least 8 characters. Share it securely with the user.'
+                            : 'Leave blank to keep the current password.',
+                      ),
+                      validator: (value) =>
+                          (isNew || (value?.isNotEmpty ?? false)) &&
+                              (value?.length ?? 0) < 8
+                          ? 'Use at least 8 characters'
+                          : null,
                     ),
                     const SizedBox(height: 12),
                     TextFormField(
@@ -368,19 +387,27 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen>
                 if (!formKey.currentState!.validate()) return;
                 Navigator.pop(dialogContext, true);
               },
-              child: Text(isNew ? 'Send invite' : 'Save changes'),
+              child: Text(isNew ? 'Create user' : 'Save changes'),
             ),
           ],
         ),
       ),
     );
 
-    if (saved != true) return;
+    if (saved != true) {
+      name.dispose();
+      email.dispose();
+      phone.dispose();
+      department.dispose();
+      password.dispose();
+      return;
+    }
     try {
       if (isNew) {
         await AuthService().adminCreateUser(
           email: email.text.trim(),
           fullName: name.text.trim(),
+          password: password.text,
           phone: phone.text.trim(),
           department: department.text.trim().isEmpty
               ? 'General'
@@ -395,10 +422,22 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen>
           status: status,
           department: department.text.trim(),
         );
+        if (password.text.isNotEmpty) {
+          try {
+            await AuthService().adminUpdateUserPassword(
+              userId: existing['id'].toString(),
+              password: password.text,
+            );
+          } catch (e) {
+            await _load();
+            _message('Profile saved, but password update failed: $e', error: true);
+            return;
+          }
+        }
       }
       await _load();
       _message(
-        isNew ? 'Invitation created remotely.' : 'User access saved remotely.',
+        isNew ? 'User created remotely.' : 'User access saved remotely.',
       );
     } catch (e) {
       _message('User operation failed: $e', error: true);
@@ -407,6 +446,7 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen>
       email.dispose();
       phone.dispose();
       department.dispose();
+      password.dispose();
     }
   }
 
@@ -424,6 +464,43 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen>
       _message('User deactivated remotely.');
     } catch (e) {
       _message('Could not deactivate user: $e', error: true);
+    }
+  }
+
+  Future<void> _deleteUser(Map<String, dynamic> user) async {
+    final userId = user['id']?.toString() ?? '';
+    if (userId == AuthService().currentUser?.id) {
+      _message('You cannot delete your own account.', error: true);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete user permanently?'),
+        content: Text(
+          'Delete ${user['full_name'] ?? user['email'] ?? 'this user'}? '
+          'They will no longer be able to sign in.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await AuthService().adminDeleteUser(userId: userId);
+      await _load();
+      _message('User deleted.');
+    } catch (e) {
+      _message('Could not delete user: $e', error: true);
     }
   }
 
@@ -660,53 +737,84 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen>
   }
 
   Widget _tabBar(Brightness br) {
-    return _panel(
-      br,
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: LayoutBuilder(
-          builder: (_, constraints) {
-            final width = constraints.maxWidth > 760
-                ? 760.0
-                : constraints.maxWidth;
-            return Center(
-              child: SizedBox(
-                width: width,
-                child: TabBar(
-                  controller: _tabs,
-                  isScrollable: true,
-                  tabAlignment: TabAlignment.center,
-                  labelColor: Colors.white,
-                  unselectedLabelColor: AppTheme.textSecondary(br),
-                  indicator: BoxDecoration(
-                    color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  indicatorPadding: const EdgeInsets.all(4),
-                  dividerColor: Colors.transparent,
-                  tabs: const [
-                    Tab(
-                      icon: Icon(Icons.shield_outlined, size: 16),
-                      text: 'Roles & permissions',
-                    ),
-                    Tab(
-                      icon: Icon(Icons.people_outline, size: 16),
-                      text: 'Central users',
-                    ),
-                    Tab(
-                      icon: Icon(Icons.receipt_long_outlined, size: 16),
-                      text: 'Audit logs',
-                    ),
-                    Tab(
-                      icon: Icon(Icons.history_rounded, size: 16),
-                      text: 'Recent activity',
-                    ),
-                  ],
+    final isDark = br == Brightness.dark;
+    final bgColor = isDark
+        ? const Color(0xFF1C1A27)
+        : AppColors.primaryLighter;
+    final borderColor = isDark
+        ? const Color(0xFF312E47)
+        : AppColors.primaryLight;
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: isDark ? 0.18 : 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: LayoutBuilder(
+        builder: (_, constraints) {
+          final isNarrow = constraints.maxWidth < 600;
+          return TabBar(
+            controller: _tabs,
+            isScrollable: isNarrow,
+            tabAlignment:
+                isNarrow ? TabAlignment.start : TabAlignment.fill,
+            labelColor: Colors.white,
+            unselectedLabelColor: isDark
+                ? const Color(0xFF9E9BB5)
+                : AppColors.primary.withValues(alpha: 0.55),
+            labelStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
+            ),
+            unselectedLabelStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
+            indicator: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withValues(alpha: 0.35),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
                 ),
+              ],
+            ),
+            indicatorPadding: EdgeInsets.zero,
+            indicatorSize: TabBarIndicatorSize.tab,
+            dividerColor: Colors.transparent,
+            splashFactory: NoSplash.splashFactory,
+            overlayColor: WidgetStateProperty.all(Colors.transparent),
+            tabs: const [
+              Tab(
+                icon: Icon(Icons.shield_outlined, size: 16),
+                text: 'Roles & permissions',
               ),
-            );
-          },
-        ),
+              Tab(
+                icon: Icon(Icons.people_outline, size: 16),
+                text: 'Central users',
+              ),
+              Tab(
+                icon: Icon(Icons.receipt_long_outlined, size: 16),
+                text: 'Audit logs',
+              ),
+              Tab(
+                icon: Icon(Icons.history_rounded, size: 16),
+                text: 'Recent activity',
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1260,6 +1368,17 @@ class _AdminConsoleScreenState extends State<AdminConsoleScreen>
                             onPressed: () => _deactivateUser(user),
                             icon: const Icon(
                               Icons.person_off_outlined,
+                              size: 17,
+                              color: AppColors.danger,
+                            ),
+                          ),
+                        if (user['id']?.toString() !=
+                            AuthService().currentUser?.id)
+                          IconButton(
+                            tooltip: 'Delete user permanently',
+                            onPressed: () => _deleteUser(user),
+                            icon: const Icon(
+                              Icons.delete_outline,
                               size: 17,
                               color: AppColors.danger,
                             ),
