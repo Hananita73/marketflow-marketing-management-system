@@ -629,33 +629,40 @@ class QuickActionsCard extends StatelessWidget {
             iconColor: AppColors.warning,
           ),
           const SizedBox(height: 16),
-          _QuickActionTile(
-            icon: Icons.add_circle_outline,
-            color: AppColors.primary,
-            label: 'New Campaign',
-            onTap: onNewCampaign,
-          ),
-          const SizedBox(height: 8),
-          _QuickActionTile(
-            icon: Icons.person_add_alt_1_outlined,
-            color: AppColors.success,
-            label: 'Add Lead',
-            onTap: onAddLead,
-          ),
-          const SizedBox(height: 8),
-          _QuickActionTile(
-            icon: Icons.article_outlined,
-            color: AppColors.info,
-            label: 'Create Content',
-            onTap: onCreateContent,
-          ),
-          const SizedBox(height: 8),
-          _QuickActionTile(
-            icon: Icons.bar_chart_outlined,
-            color: AppColors.warning,
-            label: 'Create Report',
-            onTap: onCreateReport,
-          ),
+          if (onNewCampaign != null)
+            _QuickActionTile(
+              icon: Icons.add_circle_outline,
+              color: AppColors.primary,
+              label: 'New Campaign',
+              onTap: onNewCampaign,
+            ),
+          if (onAddLead != null) ...[
+            const SizedBox(height: 8),
+            _QuickActionTile(
+              icon: Icons.person_add_alt_1_outlined,
+              color: AppColors.success,
+              label: 'Add Lead',
+              onTap: onAddLead,
+            ),
+          ],
+          if (onCreateContent != null) ...[
+            const SizedBox(height: 8),
+            _QuickActionTile(
+              icon: Icons.article_outlined,
+              color: AppColors.info,
+              label: 'Create Content',
+              onTap: onCreateContent,
+            ),
+          ],
+          if (onCreateReport != null) ...[
+            const SizedBox(height: 8),
+            _QuickActionTile(
+              icon: Icons.bar_chart_outlined,
+              color: AppColors.warning,
+              label: 'Create Report',
+              onTap: onCreateReport,
+            ),
+          ],
         ],
       ),
     );

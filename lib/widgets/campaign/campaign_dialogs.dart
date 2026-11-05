@@ -4,6 +4,8 @@ import '../../core/colors.dart';
 import '../../core/constants.dart';
 import '../../core/theme.dart';
 import '../../models/campaign.dart';
+import '../../models/campaign_customer.dart';
+import '../../models/customer.dart';
 import '../common/custom_button.dart';
 import 'campaign_form_widgets.dart';
 
@@ -481,6 +483,13 @@ class CampaignDetailsDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final assignments = CampaignCustomerRepository.getByCampaign(campaign.id);
+    final customers = assignments
+        .map((assignment) => (
+              assignment: assignment,
+              customer: CustomerRepository.findById(assignment.customerId),
+            ))
+        .toList();
     final brightness = Theme.of(context).brightness;
     final dialogBg   = AppTheme.surfaceColor(brightness);
     final headerBg   = brightness == Brightness.dark
@@ -563,6 +572,109 @@ class CampaignDetailsDialog extends StatelessWidget {
                     _detailRow('ROI',              '${campaign.roi}x',                                     textPri, textSec),
                     if (campaign.notes.isNotEmpty)
                       _detailRow('Notes', campaign.notes, textPri, textSec),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Customers (${customers.length})',
+                      style: TextStyle(
+                        color: textPri,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (customers.isEmpty)
+                      Text(
+                        'No customers assigned to this campaign.',
+                        style: TextStyle(color: textSec, fontSize: 12),
+                      )
+                    else
+                      ...customers.map((entry) {
+                        final customer = entry.customer;
+                        if (customer == null) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Text(
+                              'Customer #${entry.assignment.customerId} — profile unavailable',
+                              style: TextStyle(color: textSec, fontSize: 12),
+                            ),
+                          );
+                        }
+                        final company = customer.company.trim();
+                        final details = <String>[
+                          if (company.isNotEmpty) company,
+                          if (customer.segment.isNotEmpty) customer.segment,
+                          if (customer.email.isNotEmpty) customer.email,
+                          if (customer.phone.isNotEmpty) customer.phone,
+                        ];
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: AppTheme.surfaceVariant(brightness),
+                            borderRadius: BorderRadius.circular(
+                              AppConstants.radiusMedium,
+                            ),
+                            border: Border.all(
+                              color: AppTheme.border(brightness),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 19,
+                                backgroundColor: AppColors.primary.withValues(
+                                  alpha: 0.12,
+                                ),
+                                child: Text(
+                                  customer.initials,
+                                  style: const TextStyle(
+                                    color: AppColors.primary,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      customer.name,
+                                      style: TextStyle(
+                                        color: textPri,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    if (details.isNotEmpty) ...[
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        details.join(' · '),
+                                        style: TextStyle(
+                                          color: textSec,
+                                          fontSize: 11,
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                entry.assignment.participationStatus,
+                                style: const TextStyle(
+                                  color: AppColors.primary,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
                   ],
                 ),
               ),

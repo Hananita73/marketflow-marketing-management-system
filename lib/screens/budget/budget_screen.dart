@@ -1,5 +1,6 @@
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:fl_chart/fl_chart.dart';
+import '../../config/supabase_config.dart';
 import '../../services/access_service.dart';
 import '../../core/colors.dart';
 import '../../core/constants.dart';
@@ -7,6 +8,8 @@ import '../../core/theme.dart';
 import '../../models/budget.dart';
 import '../../models/budget_request.dart';
 import '../../models/campaign.dart';
+import '../../models/campaign_customer.dart';
+import '../../models/customer.dart';
 import '../../models/expense.dart';
 import '../../models/notification_model.dart';
 import '../../services/approval_service.dart';
@@ -65,9 +68,9 @@ class _BudgetScreenState extends State<BudgetScreen> {
 
   // Permission checks for budget module
   bool _canManageBudgets() {
-    final role = AuthService().currentRole;
-    if (role == 'marketing_manager') return true;
-    return false; // Only admins and managers can manage budgets
+    return AuthService().isAdmin ||
+        AccessService.canCreate('Budget') ||
+        AccessService.canEdit('Budget');
   }
 
   bool _canViewBudgets() {
@@ -91,10 +94,6 @@ class _BudgetScreenState extends State<BudgetScreen> {
     return matchQ && matchC && matchS && matchCamp;
   }).toList();
 
-  double get _totalAllocated => _budgets.fold(0, (s, b) => s + b.allocated);
-  double get _totalSpent => _budgets.fold(0, (s, b) => s + b.spent);
-  double get _totalRemaining => _budgets.fold(0, (s, b) => s + b.remaining);
-
   void _showSnack(String msg, {bool error = false}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(msg),
@@ -109,8 +108,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
       _requests.where((r) => r.status == 'Pending').toList();
 
   bool get _canApproveBudgetRequests {
-    final role = AuthService().currentRole;
-    return role == 'marketing_manager';
+    return AuthService().isAdmin || AccessService.canApprove('Budget');
   }
 
   void _openRequestForm({Budget? linkedBudget}) {
@@ -472,7 +470,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primary, foregroundColor: Colors.white),
-                        onPressed: () {
+                        onPressed: () async {
                           // Only admins and marketing managers can add budgets
                           if (!_canManageBudgets()) {
                             _showSnack('You do not have permission to add budgets', error: true);
@@ -493,33 +491,49 @@ class _BudgetScreenState extends State<BudgetScreen> {
                             lastUpdated: DateTime.now(),
                             campaignId: campaignId,
                           );
-                          // Controlled reassignment: when a budget moves to a new
-                          // campaign, re-link its recorded expenses so the
-                          // campaign/budget consistency (enforced in the DB) holds.
+                          // Re-link expenses before moving the budget allocation.
                           if (isEdit && existing.campaignId != campaignId) {
                             final newCampId = campaignId ?? '';
                             for (final e in ExpenseRepository.getByBudget(existing.id)) {
                               if (newCampId.isNotEmpty) {
-                                ExpenseRepository.update(Expense(
+                                final savedExpense = await ExpenseRepository.update(Expense(
                                   id: e.id, campaignId: newCampId, budgetId: e.budgetId,
+                                  company: e.company,
                                   name: e.name, description: e.description, category: e.category,
                                   amount: e.amount, expenseDate: e.expenseDate, vendor: e.vendor,
                                   paymentStatus: e.paymentStatus, status: e.status,
                                   recordedBy: e.recordedBy, createdAt: e.createdAt, updatedAt: DateTime.now(),
                                 ));
+                                if (!savedExpense) {
+                                  if (ctx.mounted) {
+                                    _showSnack(
+                                      'The budget could not be reassigned because one or more expenses failed validation or persistence.',
+                                      error: true,
+                                    );
+                                  }
+                                  return;
+                                }
                               }
                             }
                           }
+                          final saved = isEdit
+                              ? await BudgetRepository.update(item)
+                              : await BudgetRepository.add(item);
+                          if (!ctx.mounted) return;
+                          if (!saved) {
+                            _showSnack(
+                              'Budget could not be saved remotely. Check your connection and permissions.',
+                              error: true,
+                            );
+                            return;
+                          }
                           setState(() {
-                            if (isEdit) {
-                              BudgetRepository.update(item);
-                            } else {
-                              BudgetRepository.add(item);
-                            }
                             _reload();
                           });
                           Navigator.pop(ctx);
-                          _showSnack(isEdit ? 'Budget updated.' : 'Budget added.');
+                          _showSnack(
+                            '${isEdit ? 'Budget updated' : 'Budget added'}${SupabaseConfig.isConfigured ? '.' : ' locally; remote database is not configured.'}',
+                          );
                         },
                         child: Text(isEdit ? 'Save Changes' : 'Add Budget'),
                       ),
@@ -545,13 +559,20 @@ class _BudgetScreenState extends State<BudgetScreen> {
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger, foregroundColor: Colors.white),
-            onPressed: () {
+            onPressed: () async {
               if (!AccessService.requireDelete(context, 'Budget')) return;
-              setState(() {
-                BudgetRepository.remove(b.id);
-                _reload();
-              });
-              Navigator.pop(ctx); _showSnack('Budget deleted.');
+              final deleted = await BudgetRepository.remove(b.id);
+              if (!ctx.mounted) return;
+              if (!deleted) {
+                _showSnack(
+                  'Budget could not be deleted remotely. Check your connection and permissions.',
+                  error: true,
+                );
+                return;
+              }
+              setState(_reload);
+              Navigator.pop(ctx);
+              _showSnack('Budget deleted.');
             },
             child: const Text('Delete'),
           ),
@@ -573,6 +594,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
     final vendorCtrl = TextEditingController();
     final descCtrl = TextEditingController();
     String category = budget.category;
+    String? selectedCompany;
     String paymentStatus = AppConstants.paymentPending;
     DateTime expenseDate = DateTime.now();
     final fk = GlobalKey<FormState>();
@@ -586,6 +608,35 @@ class _BudgetScreenState extends State<BudgetScreen> {
         final fill = AppTheme.inputFill(br);
         final border = AppTheme.border(br);
         final expenses = ExpenseRepository.getByBudget(budget.id);
+        final companyNames =
+            CampaignCustomerRepository.getByCampaign(budget.campaignId!)
+                .map(CustomerRepository.findById)
+                .whereType<Customer>()
+                .map(
+                  (customer) => customer.company.trim().isEmpty
+                      ? customer.name.trim()
+                      : customer.company.trim(),
+                )
+                .where((company) => company.isNotEmpty)
+                .toSet()
+                .toList()
+              ..sort();
+        final companyAllocated = selectedCompany == null
+            ? 0.0
+            : CampaignCustomerRepository.allocatedForCompany(
+                budget.campaignId!,
+                selectedCompany!,
+              );
+        final companySpent = selectedCompany == null
+            ? 0.0
+            : ExpenseRepository.spentForCompany(
+                budget.campaignId!,
+                selectedCompany!,
+              );
+        final companyRemaining = CampaignBudgetMath.remaining(
+          companyAllocated,
+          companySpent,
+        );
 
         return Dialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppConstants.radiusXL)),
@@ -640,6 +691,53 @@ class _BudgetScreenState extends State<BudgetScreen> {
                   const SizedBox(height: 12),
                   Text('Add Expense', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: textPri)),
                   const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: companyNames.contains(selectedCompany)
+                        ? selectedCompany
+                        : null,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: 'Company *',
+                      filled: true,
+                      fillColor: fill,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(
+                          AppConstants.radiusMedium,
+                        ),
+                        borderSide: BorderSide(color: border),
+                      ),
+                    ),
+                    items: companyNames
+                        .map(
+                          (companyName) => DropdownMenuItem(
+                            value: companyName,
+                            child: Text(companyName),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setLocal(() {
+                      selectedCompany = value;
+                      amtCtrl.clear();
+                    }),
+                    validator: (value) => value == null
+                        ? 'Assign a company to the campaign and allocate a budget first.'
+                        : null,
+                  ),
+                  if (selectedCompany != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Allocated ETB ${companyAllocated.toStringAsFixed(2)}  ·  '
+                      'Spent ETB ${companySpent.toStringAsFixed(2)}  ·  '
+                      'Unallocated ETB ${companyRemaining.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: companyRemaining > 0
+                            ? textSec
+                            : AppColors.danger,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
                   TextFormField(
                     controller: nameCtrl,
                     style: TextStyle(fontSize: 13, color: textPri),
@@ -650,10 +748,27 @@ class _BudgetScreenState extends State<BudgetScreen> {
                   const SizedBox(height: 12),
                   Row(children: [
                     Expanded(child: TextFormField(
-                      controller: amtCtrl, keyboardType: TextInputType.number, style: TextStyle(fontSize: 13, color: textPri),
-                      decoration: InputDecoration(labelText: 'Amount (ETB) *', filled: true, fillColor: fill,
+                      controller: amtCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), style: TextStyle(fontSize: 13, color: textPri),
+                      autovalidateMode: AutovalidateMode.onUserInteraction,
+                      onChanged: (_) => setLocal(() {}),
+                      decoration: InputDecoration(labelText: 'Expense amount (ETB) *', filled: true, fillColor: fill,
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(AppConstants.radiusMedium), borderSide: BorderSide(color: border))),
-                      validator: (v) { if (v == null || v.trim().isEmpty) return 'Required'; if (double.tryParse(v.trim()) == null) return 'Number'; return null; },
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) return 'Required';
+                        final amount = double.tryParse(v.trim());
+                        if (amount == null || amount <= 0) {
+                          return 'Enter a positive number';
+                        }
+                        if (!CampaignBudgetMath.canRecordExpense(
+                          allocated: companyAllocated,
+                          alreadySpent: companySpent,
+                          expenseAmount: amount,
+                        )) {
+                          return 'Spent amount exceeds the company allocation. '
+                              'Available: ETB ${companyRemaining.toStringAsFixed(2)}';
+                        }
+                        return null;
+                      },
                     )),
                     const SizedBox(width: 12),
                     Expanded(child: _ExpenseDropdown(label: 'Category', value: category, items: AppConstants.expenseCategories, fillColor: fill, borderColor: border, textColor: textPri, secColor: textSec, onChanged: (v) => setLocal(() => category = v))),
@@ -684,13 +799,14 @@ class _BudgetScreenState extends State<BudgetScreen> {
                     ElevatedButton.icon(
                       icon: const Icon(Icons.add, size: 16), label: const Text('Record Expense'),
                       style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white),
-                      onPressed: () {
+                      onPressed: () async {
                         if (!fk.currentState!.validate()) return;
                         final amount = double.parse(amtCtrl.text.trim());
-                        ExpenseRepository.add(Expense(
+                        final saved = await ExpenseRepository.add(Expense(
                           id: ExpenseRepository.nextId(),
                           campaignId: budget.campaignId!,
                           budgetId: budget.id,
+                          company: selectedCompany!,
                           name: nameCtrl.text.trim(),
                           description: descCtrl.text.trim(),
                           category: category,
@@ -703,10 +819,22 @@ class _BudgetScreenState extends State<BudgetScreen> {
                           createdAt: DateTime.now(),
                           updatedAt: DateTime.now(),
                         ));
+                        if (!ctx.mounted) return;
+                        if (!saved) {
+                          _showSnack(
+                            'Expense could not be saved remotely. Check your connection and permissions.',
+                            error: true,
+                          );
+                          return;
+                        }
                         setLocal(() {
                           nameCtrl.clear(); amtCtrl.clear(); vendorCtrl.clear();
                         });
-                        _showSnack('Expense recorded (pending approval).');
+                        _showSnack(
+                          SupabaseConfig.isConfigured
+                              ? 'Expense saved (pending approval).'
+                              : 'Expense saved locally (remote database is not configured).',
+                        );
                       },
                     ),
                   ]),
@@ -761,13 +889,12 @@ class _BudgetScreenState extends State<BudgetScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _KpiCardsRow(totalAllocated: _totalAllocated, totalSpent: _totalSpent, totalRemaining: _totalRemaining),
-                const SizedBox(height: AppConstants.sectionSpacing),
-                _ChartsSection(budgets: _budgets),
-                const SizedBox(height: AppConstants.sectionSpacing),
-                _UtilizationSection(budgets: _budgets),
-                const SizedBox(height: AppConstants.sectionSpacing),
-                _AlertsSection(budgets: _budgets),
+                _CompanyAllocationSection(
+                  campaigns: CampaignRepository.getAll(),
+                  assignments: CampaignCustomerRepository.getAll(),
+                  expenses: ExpenseRepository.getAll(),
+                  campaignFilter: _campaignFilter,
+                ),
                 const SizedBox(height: AppConstants.sectionSpacing),
                 // ── Budget Requests Approval Panel (managers/admins only)
                 if (_canApproveBudgetRequests && _pendingRequests.isNotEmpty) ...[
@@ -855,6 +982,195 @@ class _NoAccessPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+class _CompanyAllocationSection extends StatelessWidget {
+  final List<Campaign> campaigns;
+  final List<CampaignCustomer> assignments;
+  final List<Expense> expenses;
+  final String campaignFilter;
+
+  const _CompanyAllocationSection({
+    required this.campaigns,
+    required this.assignments,
+    required this.expenses,
+    required this.campaignFilter,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final campaignsById = {for (final campaign in campaigns) campaign.id: campaign};
+    final byCompany = <String, _CompanyAllocationSummary>{};
+    for (final assignment in assignments) {
+      if (campaignFilter != 'All' && assignment.campaignId != campaignFilter) {
+        continue;
+      }
+      final customer = CustomerRepository.findById(assignment.customerId);
+      if (customer == null) continue;
+      final company = customer.company.trim().isEmpty
+          ? customer.name.trim()
+          : customer.company.trim();
+      if (company.isEmpty) continue;
+      final summary = byCompany.putIfAbsent(
+        company,
+        () => _CompanyAllocationSummary(company),
+      );
+      summary.allocated += assignment.allocatedAmount;
+      summary.campaignIds.add(assignment.campaignId);
+    }
+
+    for (final summary in byCompany.values) {
+      summary.spent = expenses
+          .where(
+            (expense) =>
+                summary.campaignIds.contains(expense.campaignId) &&
+                expense.company == summary.company &&
+                expense.status != AppConstants.expenseRejected,
+          )
+          .fold(0, (total, expense) => total + expense.amount);
+    }
+
+    final brightness = Theme.of(context).brightness;
+    final textPrimary = AppTheme.textPrimary(brightness);
+    final textSecondary = AppTheme.textSecondary(brightness);
+    final border = AppTheme.border(brightness);
+    final rows = byCompany.values.toList()
+      ..sort((a, b) => a.company.compareTo(b.company));
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppTheme.cardColor(brightness),
+        borderRadius: BorderRadius.circular(AppConstants.radiusLarge),
+        border: Border.all(color: border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Company allocations',
+            style: TextStyle(
+              color: textPrimary,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Allocated, spent, and unallocated amounts across assigned campaigns.',
+            style: TextStyle(color: textSecondary, fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+          if (rows.isEmpty)
+            Text(
+              'No company allocations yet. Assign customers and set an allocation from a campaign.',
+              style: TextStyle(color: textSecondary, fontSize: 13),
+            )
+          else
+            ...rows.map((row) {
+              final remaining = row.allocated - row.spent;
+              final campaignNames = row.campaignIds
+                  .map((id) => campaignsById[id]?.name ?? id)
+                  .toSet()
+                  .join(', ');
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 7),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 3,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            row.company,
+                            style: TextStyle(
+                              color: textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            campaignNames,
+                            style: TextStyle(
+                              color: textSecondary,
+                              fontSize: 11,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: _CompanyAmount(
+                        label: 'Allocated',
+                        amount: row.allocated,
+                        color: textPrimary,
+                      ),
+                    ),
+                    Expanded(
+                      child: _CompanyAmount(
+                        label: 'Spent',
+                        amount: row.spent,
+                        color: textPrimary,
+                      ),
+                    ),
+                    Expanded(
+                      child: _CompanyAmount(
+                        label: 'Unallocated',
+                        amount: remaining,
+                        color: remaining < 0
+                            ? AppColors.danger
+                            : AppColors.success,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+}
+
+class _CompanyAllocationSummary {
+  final String company;
+  double allocated = 0;
+  double spent = 0;
+  final Set<String> campaignIds = {};
+
+  _CompanyAllocationSummary(this.company);
+}
+
+class _CompanyAmount extends StatelessWidget {
+  final String label;
+  final double amount;
+  final Color color;
+
+  const _CompanyAmount({
+    required this.label,
+    required this.amount,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.end,
+    children: [
+      Text(
+        label,
+        style: TextStyle(
+          color: AppTheme.textSecondary(Theme.of(context).brightness),
+          fontSize: 10,
+        ),
+      ),
+      Text(
+        'ETB ${amount.toStringAsFixed(2)}',
+        style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600),
+      ),
+    ],
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1697,7 +2013,6 @@ class _BudgetTableSection extends StatelessWidget {
                       DataColumn(label: _ColHeader('Allocated')),
                       DataColumn(label: _ColHeader('Spent')),
                       DataColumn(label: _ColHeader('Remaining')),
-                      DataColumn(label: _ColHeader('Utilization')),
                       DataColumn(label: _ColHeader('Status')),
                       DataColumn(label: _ColHeader('Last Updated')),
                       DataColumn(label: _ColHeader('Actions')),
@@ -1757,19 +2072,13 @@ DataRow _budgetRow(Budget b, ValueChanged<Budget> onEdit,
             color: campName == '— Unassigned —' ? AppTheme.textSecondary(brightness) : AppTheme.textPrimary(brightness)),
             overflow: TextOverflow.ellipsis, maxLines: 2))),
     DataCell(Text(_etb(b.allocated), style: TextStyle(fontSize: 13, color: AppTheme.textPrimary(brightness)))),
-    DataCell(Text(_etb(b.spent), style: TextStyle(fontSize: 13, color: AppTheme.textPrimary(brightness)))),
-    DataCell(Text(_etb(b.remaining), style: TextStyle(fontSize: 13,
-        color: b.remaining <= 0 ? AppColors.danger : AppTheme.textPrimary(brightness)))),
-    DataCell(Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-      Text('${(b.utilization * 100).toStringAsFixed(0)}%',
-          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: b.utilizationColor)),
-      const SizedBox(height: 4),
-      SizedBox(width: 80, child: ClipRRect(borderRadius: BorderRadius.circular(3),
-          child: LinearProgressIndicator(value: b.utilization, minHeight: 4,
-              backgroundColor: AppTheme.border(brightness),
-              valueColor: AlwaysStoppedAnimation<Color>(b.utilizationColor)))),
-    ])),
-    DataCell(_StatusBadge(status: b.utilizationStatus, color: b.utilizationColor)),
+    DataCell(Text(_etb(_budgetSpent(b)), style: TextStyle(fontSize: 13, color: AppTheme.textPrimary(brightness)))),
+    DataCell(Text(_etb(b.allocated - _budgetSpent(b)), style: TextStyle(fontSize: 13,
+        color: b.allocated < _budgetSpent(b) ? AppColors.danger : AppTheme.textPrimary(brightness)))),
+    DataCell(_StatusBadge(
+      status: _budgetUtilizationStatus(b),
+      color: _budgetUtilizationColor(b),
+    )),
     DataCell(Text('${b.lastUpdated.day}/${b.lastUpdated.month}/${b.lastUpdated.year}',
         style: TextStyle(fontSize: 12, color: AppTheme.textSecondary(brightness)))),
     DataCell(Row(mainAxisSize: MainAxisSize.min, children: [
@@ -1814,7 +2123,10 @@ class _BudgetCard extends StatelessWidget {
         Row(children: [
           Expanded(child: Text(b.name, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
               color: AppTheme.textPrimary(brightness)))),
-          _StatusBadge(status: b.utilizationStatus, color: b.utilizationColor),
+          _StatusBadge(
+            status: _budgetUtilizationStatus(b),
+            color: _budgetUtilizationColor(b),
+          ),
         ]),
         const SizedBox(height: 4),
         Text('${b.category}  ·  $campName', style: TextStyle(fontSize: 11, color: AppTheme.textSecondary(brightness))),
@@ -1822,19 +2134,19 @@ class _BudgetCard extends StatelessWidget {
         Row(children: [
           _MiniStat('Allocated', _etb(b.allocated)),
           const SizedBox(width: 16),
-          _MiniStat('Spent', _etb(b.spent)),
+          _MiniStat('Spent', _etb(_budgetSpent(b))),
           const SizedBox(width: 16),
-          _MiniStat('Remaining', _etb(b.remaining)),
+          _MiniStat('Remaining', _etb(b.allocated - _budgetSpent(b))),
         ]),
-        const SizedBox(height: 8),
-        ClipRRect(borderRadius: BorderRadius.circular(3),
-            child: LinearProgressIndicator(value: b.utilization, minHeight: 5,
-                backgroundColor: AppTheme.border(brightness),
-                valueColor: AlwaysStoppedAnimation<Color>(b.utilizationColor))),
-        const SizedBox(height: 8),
         Row(children: [
-          Text('${(b.utilization * 100).toStringAsFixed(0)}% utilized',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: b.utilizationColor)),
+          Text(
+            _budgetUtilizationStatus(b),
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: _budgetUtilizationColor(b),
+            ),
+          ),
           const Spacer(),
           _TableActionButton(icon: Icons.receipt_long_outlined, tooltip: 'Expenses', onTap: () => onAddExpense(b)),
           const SizedBox(width: 4),
@@ -2070,6 +2382,28 @@ String _etb(double value) {
   return 'ETB ${value.toStringAsFixed(0)}';
 }
 
+double _budgetSpent(Budget budget) => budget.spent +
+    ExpenseRepository.getByBudget(budget.id)
+        .where((expense) => expense.status != AppConstants.expenseRejected)
+        .fold(0, (total, expense) => total + expense.amount);
+
+double _budgetUtilization(Budget budget) =>
+    budget.allocated > 0 ? _budgetSpent(budget) / budget.allocated : 0;
+
+String _budgetUtilizationStatus(Budget budget) {
+  final utilization = _budgetUtilization(budget);
+  if (utilization >= 1) return 'Over Budget';
+  if (utilization >= .85) return 'Near Limit';
+  return 'Healthy';
+}
+
+Color _budgetUtilizationColor(Budget budget) {
+  final utilization = _budgetUtilization(budget);
+  if (utilization >= 1) return AppColors.danger;
+  if (utilization >= .85) return AppColors.warning;
+  return AppColors.success;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // _BudgetRequestTile — used inside ApprovalPanel for budget requests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2188,4 +2522,3 @@ class _ExpenseDropdown extends StatelessWidget {
     ]);
   }
 }
-

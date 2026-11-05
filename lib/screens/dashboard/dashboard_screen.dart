@@ -132,16 +132,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
         // The dashboard renders a different set of cards per role: budget
         // figures need Budget view access, quick actions need create access
         // on at least one of the modules they open.
-        final showBudgetOverview = AccessService.canView('Budget');
         final showQuickActions =
             AccessService.canCreate('Campaigns') ||
                 AccessService.canCreate('Leads') ||
                 AccessService.canCreate('Content') ||
                 AccessService.canCreate('Reports');
+        final showRecentActivity = AccessService.canView('Notifications');
+        final showCampaigns = AccessService.canView('Campaigns');
+        final showLeads = AccessService.canView('Leads');
+        final showCustomers = AccessService.canView('Customers');
+        final showBudget = AccessService.canView('Budget');
+        final showReports = AccessService.canView('Reports');
         final role = AuthService().currentRole;
         final channelPerf = DashboardLiveData.channelPerformance;
         final visibleKpis = _kpisForRole(role)
-            .where((s) => s.module == null || AccessService.canView(s.module!))
+            .where((s) => s.module != null && AccessService.canView(s.module!))
             .toList();
 
         return Column(
@@ -167,79 +172,121 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
             const SizedBox(height: AppConstants.sectionSpacing),
 
-            // -- 2. KPI cards -------------------------------------------
-            _KpiSummaryGrid(
-              stats:    visibleKpis,
-              isWide:   isWide,
-              isMedium: isMedium,
-            ),
-            const SizedBox(height: AppConstants.sectionSpacing),
-
-            // -- 3. Charts row ------------------------------------------
-            if (isWide)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 3,
-                    child: _CampaignPerformanceCard(
-                      selectedPeriod:  _selectedPeriod,
+            if (showCampaigns)
+              _ModuleSummarySection(
+                title: 'Campaigns',
+                icon: Icons.campaign_outlined,
+                stats: visibleKpis.where((s) => s.module == 'Campaigns').toList(),
+                isWide: isWide,
+                isMedium: isMedium,
+                child: Column(
+                  children: [
+                    _CampaignPerformanceCard(
+                      selectedPeriod: _selectedPeriod,
                       onPeriodChanged: (v) =>
                           setState(() => _selectedPeriod = v),
                     ),
-                  ),
-                  const SizedBox(width: AppConstants.itemSpacing),
-                  Expanded(
-                    flex: 2,
-                    child: _LeadsSourceCard(
-                      onViewReport: () => _navigateTo(AppRoutes.reports),
+                    const SizedBox(height: AppConstants.itemSpacing),
+                    TopCampaignsTable(
+                      campaigns: DashboardLiveData.topCampaigns,
+                      onViewAll: () => _navigateTo(AppRoutes.campaigns),
                     ),
-                  ),
-                ],
-              )
-            else
-              Column(
-                children: [
-                  _CampaignPerformanceCard(
-                    selectedPeriod:  _selectedPeriod,
-                    onPeriodChanged: (v) =>
-                        setState(() => _selectedPeriod = v),
-                  ),
-                  const SizedBox(height: AppConstants.itemSpacing),
-                  _LeadsSourceCard(
-                    onViewReport: () => _navigateTo(AppRoutes.reports),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            const SizedBox(height: AppConstants.sectionSpacing),
+            if (showCampaigns)
+              const SizedBox(height: AppConstants.sectionSpacing),
+            if (showLeads)
+              _ModuleSummarySection(
+                title: 'Leads',
+                icon: Icons.person_search_outlined,
+                stats: visibleKpis.where((s) => s.module == 'Leads').toList(),
+                isWide: isWide,
+                isMedium: isMedium,
+                child: _LeadsSourceCard(
+                  onViewReport: showReports ? () => _navigateTo(AppRoutes.reports) : null,
+                ),
+              ),
+            if (showLeads)
+              const SizedBox(height: AppConstants.sectionSpacing),
+            if (showCustomers)
+              _ModuleSummarySection(
+                title: 'Customers',
+                icon: Icons.people_outline,
+                stats: visibleKpis.where((s) => s.module == 'Customers').toList(),
+                isWide: isWide,
+                isMedium: isMedium,
+              ),
+            if (showCustomers)
+              const SizedBox(height: AppConstants.sectionSpacing),
+            if (showBudget)
+              _ModuleSummarySection(
+                title: 'Budget',
+                icon: Icons.account_balance_wallet_outlined,
+                stats: visibleKpis.where((s) => s.module == 'Budget').toList(),
+                isWide: isWide,
+                isMedium: isMedium,
+                child: BudgetOverviewCard(
+                  total: DashboardLiveData.budgetTotal,
+                  spent: DashboardLiveData.budgetSpent,
+                  remaining: DashboardLiveData.budgetRemaining,
+                  utilization: DashboardLiveData.budgetUtilization,
+                  onViewDetails: () => _navigateTo(AppRoutes.budget),
+                ),
+              ),
+            if (showBudget)
+              const SizedBox(height: AppConstants.sectionSpacing),
+            if (showReports && channelPerf.isNotEmpty)
+              _ModuleSummarySection(
+                title: 'Reports & Channels',
+                icon: Icons.assessment_outlined,
+                stats: const [],
+                isWide: isWide,
+                isMedium: isMedium,
+                child: ChannelPerformanceCard(
+                  channels: channelPerf,
+                  onViewAnalytics: () => _navigateTo(AppRoutes.reports),
+                ),
+              ),
+            if (showReports && channelPerf.isNotEmpty)
+              const SizedBox(height: AppConstants.sectionSpacing),
 
             // -- 4. Recent Activity + Quick Actions + ROI ---------------
             if (isWide)
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
+                  if (showRecentActivity)
+                    Expanded(
                     flex: 2,
                     child: RecentActivityCard(
                       activities: DashboardLiveData.recentActivities,
                       onViewAll: () => _navigateTo(AppRoutes.notifications),
                     ),
                   ),
-                  const SizedBox(width: AppConstants.itemSpacing),
+                  if (showRecentActivity)
+                    const SizedBox(width: AppConstants.itemSpacing),
                   Expanded(
                     flex: 1,
                     child: Column(
                       children: [
                         if (showQuickActions)
                     QuickActionsCard(
-                      onNewCampaign:  () =>
-                          _navigateTo(AppRoutes.campaignCreate),
-                          onAddLead:      () => _navigateTo(AppRoutes.leads),
-                          onCreateContent:() => _navigateTo(AppRoutes.content),
-                          onCreateReport: () => _navigateTo(AppRoutes.reports),
+                      onNewCampaign: AccessService.canCreate('Campaigns')
+                          ? () => _navigateTo(AppRoutes.campaignCreate)
+                          : null,
+                      onAddLead: AccessService.canCreate('Leads')
+                          ? () => _navigateTo(AppRoutes.leads)
+                          : null,
+                      onCreateContent: AccessService.canCreate('Content')
+                          ? () => _navigateTo(AppRoutes.content)
+                          : null,
+                      onCreateReport: AccessService.canCreate('Reports')
+                          ? () => _navigateTo(AppRoutes.reports)
+                          : null,
                         ),
                         const SizedBox(height: AppConstants.itemSpacing),
-                        RoiInsightCard(
+                        if (showReports) RoiInsightCard(
                           onExplore: () => _navigateTo(AppRoutes.reports),
                         ),
                       ],
@@ -250,83 +297,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
             else
               Column(
                 children: [
-                  RecentActivityCard(
-                    activities: DashboardLiveData.recentActivities,
-                    onViewAll: () => _navigateTo(AppRoutes.notifications),
-                  ),
-                  const SizedBox(height: AppConstants.itemSpacing),
+                  if (showRecentActivity) ...[
+                    RecentActivityCard(
+                      activities: DashboardLiveData.recentActivities,
+                      onViewAll: () => _navigateTo(AppRoutes.notifications),
+                    ),
+                    const SizedBox(height: AppConstants.itemSpacing),
+                  ],
                   if (showQuickActions)
                     QuickActionsCard(
-                      onNewCampaign:  () => _navigateTo(AppRoutes.campaignCreate),
-                      onAddLead:      () => _navigateTo(AppRoutes.leads),
-                      onCreateContent:() => _navigateTo(AppRoutes.content),
-                      onCreateReport: () => _navigateTo(AppRoutes.reports),
+                      onNewCampaign: AccessService.canCreate('Campaigns')
+                          ? () => _navigateTo(AppRoutes.campaignCreate)
+                          : null,
+                      onAddLead: AccessService.canCreate('Leads')
+                          ? () => _navigateTo(AppRoutes.leads)
+                          : null,
+                      onCreateContent: AccessService.canCreate('Content')
+                          ? () => _navigateTo(AppRoutes.content)
+                          : null,
+                      onCreateReport: AccessService.canCreate('Reports')
+                          ? () => _navigateTo(AppRoutes.reports)
+                          : null,
                     ),
-                  const SizedBox(height: AppConstants.itemSpacing),
-                  RoiInsightCard(
+                  if (showReports) const SizedBox(height: AppConstants.itemSpacing),
+                  if (showReports) RoiInsightCard(
                     onExplore: () => _navigateTo(AppRoutes.reports),
                   ),
                 ],
               ),
             const SizedBox(height: AppConstants.sectionSpacing),
 
-            // -- 6. Top Campaigns table ---------------------------------
-            TopCampaignsTable(
-              campaigns: DashboardLiveData.topCampaigns,
-              onViewAll: () => _navigateTo(AppRoutes.campaigns),
-            ),
-            const SizedBox(height: AppConstants.sectionSpacing),
-
             // -- AI Assistant shortcut ----------------------------------
             _AiShortcutCard(),
             const SizedBox(height: AppConstants.sectionSpacing),
 
-            // -- 7. Budget Overview + Channel Performance ----------------
-            if (isWide)
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (showBudgetOverview) ...[
-                    Expanded(
-                      child: BudgetOverviewCard(
-                        total:        DashboardLiveData.budgetTotal,
-                        spent:        DashboardLiveData.budgetSpent,
-                        remaining:    DashboardLiveData.budgetRemaining,
-                        utilization:  DashboardLiveData.budgetUtilization,
-                        onViewDetails:() => _navigateTo(AppRoutes.budget),
-                      ),
-                    ),
-                    const SizedBox(width: AppConstants.itemSpacing),
-                  ],
-                  if (channelPerf.isNotEmpty)
-                    Expanded(
-                      child: ChannelPerformanceCard(
-                        channels:       channelPerf,
-                        onViewAnalytics:() => _navigateTo(AppRoutes.reports),
-                      ),
-                    ),
-                ],
-              )
-            else
-              Column(
-                children: [
-                  if (showBudgetOverview) ...[
-                    BudgetOverviewCard(
-                      total:        DashboardLiveData.budgetTotal,
-                      spent:        DashboardLiveData.budgetSpent,
-                      remaining:    DashboardLiveData.budgetRemaining,
-                      utilization:  DashboardLiveData.budgetUtilization,
-                      onViewDetails:() => _navigateTo(AppRoutes.budget),
-                    ),
-                    const SizedBox(height: AppConstants.itemSpacing),
-                  ],
-                  if (channelPerf.isNotEmpty)
-                    ChannelPerformanceCard(
-                      channels:       channelPerf,
-                      onViewAnalytics:() => _navigateTo(AppRoutes.reports),
-                    ),
-                ],
-              ),
           ],
         );
       },
@@ -421,15 +425,6 @@ class _RoleWorkspace extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              for (final metric in config.metrics)
-                _RoleMetric(label: metric.label, value: metric.value, color: metric.iconColor),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
@@ -448,19 +443,6 @@ class _RoleWorkspace extends StatelessWidget {
   }
 
   _RoleDashboardConfig _configForRole(String role) {
-    final all = DashboardLiveData.kpiStats;
-    KpiStat metric(String label) => all.firstWhere(
-          (k) => k.label == label,
-          orElse: () => KpiStat(
-            label: label,
-            value: '0',
-            change: '',
-            isPositive: true,
-            icon: Icons.insights_outlined,
-            iconColor: AppColors.primary,
-            subtitle: '',
-          ),
-        );
     switch (role) {
       case 'admin':
         return _RoleDashboardConfig(
@@ -468,7 +450,6 @@ class _RoleWorkspace extends StatelessWidget {
           subtitle: 'Monitor every workspace and manage access, data, and configuration.',
           icon: Icons.admin_panel_settings_outlined,
           color: AppColors.primary,
-          metrics: [metric('Total Campaigns'), metric('Total Leads'), metric('New Customers'), metric('Budget Spend')],
           actions: const [
             _RoleAction('Users & Roles', AppRoutes.users, Icons.manage_accounts_outlined),
             _RoleAction('Settings', AppRoutes.settings, Icons.settings_outlined),
@@ -481,7 +462,6 @@ class _RoleWorkspace extends StatelessWidget {
           subtitle: 'Prioritise campaigns, pipeline movement, and spend against targets.',
           icon: Icons.insights_outlined,
           color: AppColors.info,
-          metrics: [metric('Active Campaigns'), metric('Total Leads'), metric('Conversion Rate'), metric('ROI')],
           actions: const [
             _RoleAction('Campaigns', AppRoutes.campaigns, Icons.campaign_outlined),
             _RoleAction('Leads', AppRoutes.leads, Icons.person_search_outlined),
@@ -494,7 +474,6 @@ class _RoleWorkspace extends StatelessWidget {
           subtitle: 'Work the queue: publish content, follow up leads, and keep campaigns moving.',
           icon: Icons.task_alt_outlined,
           color: AppColors.success,
-          metrics: [metric('Active Campaigns'), metric('Total Leads'), metric('New Customers')],
           actions: const [
             _RoleAction('Content', AppRoutes.content, Icons.article_outlined),
             _RoleAction('Leads', AppRoutes.leads, Icons.person_search_outlined),
@@ -507,7 +486,6 @@ class _RoleWorkspace extends StatelessWidget {
           subtitle: 'Create, schedule, and manage content and influencer collaborations.',
           icon: Icons.article_outlined,
           color: const Color(0xFFEC4899),
-          metrics: [metric('Active Campaigns'), metric('Total Campaigns')],
           actions: const [
             _RoleAction('Content',    AppRoutes.content,    Icons.article_outlined),
             _RoleAction('Influencers',AppRoutes.influencers, Icons.star_outline),
@@ -520,7 +498,6 @@ class _RoleWorkspace extends StatelessWidget {
           subtitle: 'Review approved campaign and customer progress without changing records.',
           icon: Icons.visibility_outlined,
           color: AppColors.textSecondary,
-          metrics: [metric('Active Campaigns'), metric('Total Campaigns'), metric('New Customers')],
           actions: const [
             _RoleAction('Campaigns', AppRoutes.campaigns, Icons.campaign_outlined),
             _RoleAction('Reports', AppRoutes.reports, Icons.assessment_outlined),
@@ -530,40 +507,11 @@ class _RoleWorkspace extends StatelessWidget {
   }
 }
 
-class _RoleMetric extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
-
-  const _RoleMetric({required this.label, required this.value, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    final brightness = Theme.of(context).brightness;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(value, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: color)),
-          const SizedBox(height: 2),
-          Text(label, style: TextStyle(fontSize: 11, color: AppTheme.textSecondary(brightness))),
-        ],
-      ),
-    );
-  }
-}
-
 class _RoleDashboardConfig {
   final String title;
   final String subtitle;
   final IconData icon;
   final Color color;
-  final List<KpiStat> metrics;
   final List<_RoleAction> actions;
 
   const _RoleDashboardConfig({
@@ -571,7 +519,6 @@ class _RoleDashboardConfig {
     required this.subtitle,
     required this.icon,
     required this.color,
-    required this.metrics,
     required this.actions,
   });
 }
@@ -1141,6 +1088,61 @@ class _KpiSummaryGrid extends StatelessWidget {
   }
 }
 
+class _ModuleSummarySection extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final List<KpiStat> stats;
+  final bool isWide;
+  final bool isMedium;
+  final Widget? child;
+
+  const _ModuleSummarySection({
+    required this.title,
+    required this.icon,
+    required this.stats,
+    required this.isWide,
+    required this.isMedium,
+    this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppConstants.cardPadding),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceColor(brightness),
+        borderRadius: BorderRadius.circular(AppConstants.radiusLarge),
+        border: Border.all(color: AppTheme.border(brightness)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Icon(icon, size: 19, color: AppColors.primary),
+            const SizedBox(width: 8),
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ]),
+          if (stats.isNotEmpty) ...[
+            const SizedBox(height: AppConstants.itemSpacing),
+            _KpiSummaryGrid(stats: stats, isWide: isWide, isMedium: isMedium),
+          ],
+          if (child != null) ...[
+            if (stats.isNotEmpty) const SizedBox(height: AppConstants.itemSpacing),
+            child!,
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 // -----------------------------------------------------------------------------
 // 4. Campaign Performance card
 // -----------------------------------------------------------------------------
@@ -1247,7 +1249,7 @@ class _PeriodSelector extends StatelessWidget {
 // -----------------------------------------------------------------------------
 
 class _LeadsSourceCard extends StatelessWidget {
-  final VoidCallback onViewReport;
+  final VoidCallback? onViewReport;
 
   const _LeadsSourceCard({required this.onViewReport});
 
@@ -1267,26 +1269,27 @@ class _LeadsSourceCard extends StatelessWidget {
             slices:      DashboardLiveData.leadsBySource,
             centerValue: DashboardLiveData.totalLeads,
           ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              onPressed: onViewReport,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.primary,
-                side: const BorderSide(color: AppColors.primary),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+          if (onViewReport != null) ...[
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: onViewReport,
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: const BorderSide(color: AppColors.primary),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
+                child: const Text('View Full Report',
+                    style: TextStyle(fontSize: 13)),
               ),
-              child: const Text('View Full Report',
-                  style: TextStyle(fontSize: 13)),
             ),
-          ),
+          ],
         ],
       ),
     );
   }
 }
-

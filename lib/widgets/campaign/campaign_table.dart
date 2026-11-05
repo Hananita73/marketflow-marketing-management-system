@@ -4,6 +4,7 @@ import '../../core/constants.dart';
 import '../../core/routes.dart';
 import '../../core/theme.dart';
 import '../../models/campaign.dart';
+import '../../models/campaign_customer.dart';
 import 'campaign_status_badge.dart';
 
 class CampaignTable extends StatelessWidget {
@@ -225,6 +226,11 @@ class _TableRowState extends State<_TableRow> {
                     style: TextStyle(color: textSec, fontSize: 11),
                     overflow: TextOverflow.ellipsis,
                   ),
+                  Text(
+                    '${CampaignCustomerRepository.getByCampaign(c.id).length} customers',
+                    style: TextStyle(color: textSec, fontSize: 10),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ],
               ),
             ),
@@ -327,6 +333,10 @@ class _MobileCardList extends StatelessWidget {
                             Text(c.name,            style: TextStyle(color: textPri, fontSize: 14, fontWeight: FontWeight.w600)),
                             const SizedBox(height: 4),
                             Text(c.objective.label, style: TextStyle(color: textSec, fontSize: 12)),
+                            Text(
+                              '${CampaignCustomerRepository.getByCampaign(c.id).length} customers',
+                              style: TextStyle(color: textSec, fontSize: 11),
+                            ),
                           ],
                         ),
                       ),

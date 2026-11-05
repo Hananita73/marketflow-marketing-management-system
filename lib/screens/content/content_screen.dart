@@ -115,12 +115,6 @@ class _ContentScreenState extends State<ContentScreen> {
     return ['All', ...names];
   }
 
-  // ── stats ─────────────────────────────────────────────────────────────────
-  int get _totalCount     => _items.length;
-  int get _publishedCount => _items.where((c) => c.status == AppConstants.statusActive).length;
-  int get _scheduledCount => _items.where((c) => c.status == AppConstants.statusPaused).length;
-  int get _draftCount     => _items.where((c) => c.status == AppConstants.statusDraft).length;
-
   // ── CRUD ──────────────────────────────────────────────────────────────────
   void _showCreateForm()               => _openForm(existing: null);
   void _showEditForm(ContentItem item) => _openForm(existing: item);
@@ -761,15 +755,6 @@ class _ContentScreenState extends State<ContentScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Stats row
-                _StatsRow(
-                  total:     _totalCount,
-                  published: _publishedCount,
-                  scheduled: _scheduledCount,
-                  drafts:    _draftCount,
-                ),
-                const SizedBox(height: AppConstants.sectionSpacing),
-
                 // Content management card
                 Container(
                   decoration: BoxDecoration(

@@ -45,23 +45,6 @@ class _InfluencersScreenState extends State<InfluencersScreen> {
     }).toList();
   }
 
-  // ── Stats ────────────────────────────────────────────────────────────────
-  int get _activeCount =>
-      _influencers.where((i) => i.status == AppConstants.statusActive).length;
-  String get _totalReach {
-    final total = _influencers.fold<int>(0, (s, i) => s + i.followers);
-    if (total >= 1000000) return '${(total / 1000000).toStringAsFixed(1)}M';
-    if (total >= 1000) return '${(total / 1000).toStringAsFixed(0)}K';
-    return '$total';
-  }
-  String get _avgEngagement {
-    if (_influencers.isEmpty) return '0.0%';
-    final avg = _influencers.fold(0.0, (s, i) => s + i.engagementRate) /
-        _influencers.length;
-    return '${avg.toStringAsFixed(1)}%';
-  }
-  String get _avgRoi => '4.2x';
-
   // ── Dialogs ───────────────────────────────────────────────────────────────
   void _showForm({Influencer? existing}) {
     final isEdit = existing != null;
@@ -329,18 +312,6 @@ class _InfluencersScreenState extends State<InfluencersScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _StatsRow(items: [
-                  _StatItem('Active Influencers', '$_activeCount',
-                      Icons.people_outline, AppColors.primary),
-                  _StatItem('Total Reach', _totalReach,
-                      Icons.bar_chart_rounded, AppColors.info),
-                  _StatItem('Avg Engagement', _avgEngagement,
-                      Icons.favorite_border_rounded, AppColors.success),
-                  _StatItem('Campaign ROI', _avgRoi,
-                      Icons.trending_up_rounded, AppColors.warning),
-                ]),
-                const SizedBox(height: AppConstants.sectionSpacing),
-
                 _SearchAndFilters(
                   searchQuery: _searchQuery,
                   onSearchChanged: (v) => setState(() => _searchQuery = v),

@@ -21,6 +21,7 @@ import 'models/promotion.dart';
 import 'models/sms_campaign.dart';
 import 'services/admin_alert_service.dart';
 import 'services/auth_service.dart';
+import 'services/persistence_feedback.dart';
 import 'widgets/auth/auth_gate.dart';
 import 'widgets/auth/user_profile_provider.dart';
 
@@ -143,6 +144,7 @@ class _MarketingAppState extends State<MarketingApp> {
           listenable: _themeNotifier,
           builder: (context, _) {
             return MaterialApp(
+              scaffoldMessengerKey: PersistenceFeedback.messengerKey,
               debugShowCheckedModeBanner: false,
               title: AppConstants.appName,
               theme: AppTheme.light,

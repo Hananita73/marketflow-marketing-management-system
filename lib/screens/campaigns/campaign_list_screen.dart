@@ -9,9 +9,8 @@ import '../../models/notification_model.dart';
 import '../../services/audit_log_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/export_service.dart';
-import '../../widgets/campaign/campaign_stat_card.dart';
-import '../../widgets/campaign/campaign_charts.dart';
 import '../../widgets/campaign/campaign_table.dart';
+import '../../widgets/campaign/campaign_stat_card.dart';
 import '../../widgets/campaign/campaign_dialogs.dart';
 import '../../widgets/campaign/campaign_filter_dialog.dart';
 import '../../widgets/campaign/campaign_form_widgets.dart';
@@ -94,8 +93,7 @@ class _CampaignListScreenState extends State<CampaignListScreen> {
   // ── Approval workflow helpers ─────────────────────────────────────────────
 
   bool get _canApprove {
-    final role = AuthService().currentRole;
-    return role == 'marketing_manager';
+    return AuthService().isAdmin || AccessService.canApprove('Campaigns');
   }
 
   List<Campaign> get _pendingApproval => CampaignRepository.getPendingApproval();
@@ -138,7 +136,10 @@ class _CampaignListScreenState extends State<CampaignListScreen> {
 
   // ─── Dialogs / actions ───────────────────────────────────────────────────
   void _goToDetail(Campaign c) {
-    showDialog(context: context, builder: (_) => CampaignDetailsDialog(campaign: c));
+    showDialog(context: context, builder: (_) => CampaignDetailsDialog(campaign: c))
+        .then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _goToEdit(Campaign c) {
@@ -315,43 +316,6 @@ class _CampaignListScreenState extends State<CampaignListScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // KPI cards
-                _StatCardsRow(),
-                const SizedBox(height: AppConstants.sectionSpacing),
-
-                // Charts
-                LayoutBuilder(builder: (context, cst) {
-                  if (cst.maxWidth >= 1100) {
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(flex: 3, child: CampaignPerformanceChart(campaigns: campaigns)),
-                        const SizedBox(width: AppConstants.itemSpacing),
-                        Expanded(flex: 2, child: CampaignStatusDonutChart(campaigns: campaigns)),
-                      ],
-                    );
-                  }
-                  if (cst.maxWidth >= 768) {
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: CampaignPerformanceChart(campaigns: campaigns)),
-                        const SizedBox(width: AppConstants.itemSpacing),
-                        Expanded(child: CampaignStatusDonutChart(campaigns: campaigns)),
-                      ],
-                    );
-                  }
-                  return Column(children: [
-                    CampaignPerformanceChart(campaigns: campaigns),
-                    const SizedBox(height: AppConstants.itemSpacing),
-                    CampaignStatusDonutChart(campaigns: campaigns),
-                  ]);
-                }),
-                const SizedBox(height: AppConstants.sectionSpacing),
-
-                CampaignChannelProgress(campaigns: campaigns),
-                const SizedBox(height: AppConstants.sectionSpacing),
-
                 // Inline New Campaign form
                 if (_showNewForm) ...[
                   _NewCampaignFormPanel(

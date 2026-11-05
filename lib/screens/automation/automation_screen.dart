@@ -4,6 +4,7 @@ import '../../core/constants.dart';
 import '../../core/theme.dart';
 import '../../services/access_service.dart';
 import '../../services/audit_log_service.dart';
+import '../../services/admin_alert_service.dart';
 import '../../services/auth_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../config/supabase_config.dart';
@@ -180,8 +181,12 @@ class _AutomationScreenState extends State<AutomationScreen> {
           await _persistWorkflow(wf);
         }
       }
-    } catch (_) {
-      // Offline: keep in-memory seed data
+    } catch (e) {
+      AdminAlertService.reportStoreFailure(
+        table: 'automation_workflows',
+        operation: 'read',
+        error: e,
+      );
     }
   }
 
@@ -192,18 +197,38 @@ class _AutomationScreenState extends State<AutomationScreen> {
           .from('automation_workflows')
           .upsert(_workflowToRow(wf))
           .timeout(const Duration(seconds: 6));
-    } catch (_) {}
+    } catch (e) {
+      AdminAlertService.reportStoreFailure(
+        table: 'automation_workflows',
+        operation: 'write',
+        error: e,
+      );
+    }
   }
 
   Future<void> _deleteFromSupabase(String id) async {
     if (!SupabaseConfig.isConfigured) return;
     try {
-      await Supabase.instance.client
+      final rows = await Supabase.instance.client
           .from('automation_workflows')
           .delete()
           .eq('id', id)
+          .select('id')
           .timeout(const Duration(seconds: 6));
-    } catch (_) {}
+      if (rows.isEmpty) {
+        AdminAlertService.reportStoreFailure(
+          table: 'automation_workflows',
+          operation: 'delete',
+          error: StateError('No matching row was deleted.'),
+        );
+      }
+    } catch (e) {
+      AdminAlertService.reportStoreFailure(
+        table: 'automation_workflows',
+        operation: 'delete',
+        error: e,
+      );
+    }
   }
 
   Map<String, dynamic> _workflowToRow(_Workflow wf) => {

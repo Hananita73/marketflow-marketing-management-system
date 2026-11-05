@@ -68,12 +68,6 @@ class _CommunicationsScreenState extends State<CommunicationsScreen>
     }).toList();
   }
 
-  // ── Stats ──────────────────────────────────────────────────────────────────
-  int get _totalSent     => _items.fold(0, (s, x) => s + x.sentCount);
-  int get _totalFailed   => _items.fold(0, (s, x) => s + x.failedCount);
-  int get _totalRecipients => _items.fold(0, (s, x) => s + x.recipientCount);
-  int get _scheduled     => _items.where((s) => s.status == 'Scheduled').length;
-
   // ── Snack ──────────────────────────────────────────────────────────────────
   void _snack(String msg, {Color color = AppColors.success}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -682,15 +676,6 @@ class _CommunicationsScreenState extends State<CommunicationsScreen>
                     padding: EdgeInsets.all(60),
                     child: CircularProgressIndicator(color: AppColors.primary)))
                 : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    // Stats
-                    _StatsRow(
-                      totalSent: _totalSent,
-                      totalFailed: _totalFailed,
-                      totalRecipients: _totalRecipients,
-                      scheduled: _scheduled,
-                    ),
-                    const SizedBox(height: AppConstants.sectionSpacing),
-
                     // Filter row + tabs
                     _FilterBar(
                       searchQuery: _searchQuery,

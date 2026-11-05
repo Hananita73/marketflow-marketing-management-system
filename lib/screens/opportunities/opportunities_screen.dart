@@ -1,9 +1,13 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../../services/access_service.dart';
 import '../../core/colors.dart';
 import '../../core/constants.dart';
 import '../../core/theme.dart';
 import '../../models/opportunity.dart';
+import '../../models/customer.dart';
+import '../../models/lead.dart';
+import '../../services/auth_service.dart';
+import '../../services/entity_remote_stores.dart';
 import '../../widgets/common/custom_textfield.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,15 +25,44 @@ class OpportunitiesScreen extends StatefulWidget {
 class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _filterStage = 'All';
+  List<Map<String, dynamic>> _opportunityUsers = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOpportunityUsers();
+  }
+
+  Future<void> _loadOpportunityUsers() async {
+    final users = await OpportunityRemoteStore.fetchAssignableUsers();
+    if (mounted) setState(() => _opportunityUsers = users);
+  }
+
+  Customer? _customerFor(Opportunity opportunity) {
+    final id = int.tryParse(opportunity.customerId ?? '');
+    return id == null ? null : CustomerRepository.findById(id);
+  }
+
+  Lead? _leadFor(Opportunity opportunity) {
+    final id = int.tryParse(opportunity.leadId ?? '');
+    return id == null ? null : LeadRepository.findById(id);
+  }
 
   List<Opportunity> get _filtered {
     var list = List<Opportunity>.from(OpportunityRepository.getAll());
     final q = _searchController.text.toLowerCase().trim();
     if (q.isNotEmpty) {
-      list = list.where((o) =>
-          o.name.toLowerCase().contains(q) ||
-          o.company.toLowerCase().contains(q) ||
-          o.owner.toLowerCase().contains(q)).toList();
+      list = list
+          .where(
+            (o) =>
+                o.name.toLowerCase().contains(q) ||
+                o.company.toLowerCase().contains(q) ||
+                o.owner.toLowerCase().contains(q) ||
+                o.followersLabel.toLowerCase().contains(q) ||
+                (_customerFor(o)?.name.toLowerCase().contains(q) ?? false) ||
+                (_leadFor(o)?.name.toLowerCase().contains(q) ?? false),
+          )
+          .toList();
     }
     if (_filterStage != 'All') {
       list = list.where((o) => o.stage == _filterStage).toList();
@@ -46,32 +79,85 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
   // ── Dialogs ───────────────────────────────────────────────────────────────
 
   void _showAddEditDialog({Opportunity? existing}) {
-    final isEdit      = existing != null;
-    final snap        = existing;
-    final nameCtrl    = TextEditingController(text: snap?.name    ?? '');
-    final companyCtrl = TextEditingController(text: snap?.company ?? '');
-    final valueCtrl   = TextEditingController(
-        text: snap != null ? snap.value.toStringAsFixed(0) : '');
-    final ownerCtrl   = TextEditingController(
-        text: snap?.owner ?? 'Hana Tsegaye');
+    final isEdit = existing != null;
+    final snap = existing;
+    final currentUser = AuthService();
+    final currentUserId = currentUser.currentUser?.id ?? '';
+    final nameCtrl = TextEditingController(text: snap?.name ?? '');
+    final valueCtrl = TextEditingController(
+      text: snap != null ? snap.value.toStringAsFixed(0) : '',
+    );
+    final progressCtrl = TextEditingController();
+    String? selectedCustomerId = snap?.customerId?.isNotEmpty == true
+        ? snap!.customerId
+        : null;
+    String? selectedLeadId = snap?.leadId?.isNotEmpty == true
+        ? snap!.leadId
+        : null;
     String stage = snap?.stage ?? 'New';
     int probability = snap?.probability ?? 50;
+    final followerIds = <String>{
+      ...?snap?.followerIds,
+      if (snap == null ||
+          (snap.followerIds.isEmpty && currentUserId.isNotEmpty))
+        currentUserId,
+    }..removeWhere((id) => id.isEmpty);
+    final followerNames = <String, String>{};
+    for (var i = 0; i < (snap?.followerIds.length ?? 0); i++) {
+      final id = snap!.followerIds[i];
+      final name = i < snap.followerNames.length ? snap.followerNames[i] : '';
+      if (id.isNotEmpty) followerNames[id] = name;
+    }
+    if (currentUserId.isNotEmpty && followerIds.contains(currentUserId)) {
+      followerNames[currentUserId] = currentUser.currentName;
+    }
     final fk = GlobalKey<FormState>();
+    final progressHistoryFuture = isEdit
+        ? OpportunityRepository.fetchProgress(snap!.id)
+        : Future<List<OpportunityProgress>>.value(const []);
 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) {
           final brightness = Theme.of(ctx).brightness;
-          final dialogBg   = AppTheme.surfaceColor(brightness);
-          final headerBg   = brightness == Brightness.dark
+          final dialogBg = AppTheme.surfaceColor(brightness);
+          final headerBg = brightness == Brightness.dark
               ? const Color(0xFF2A2650)
               : AppColors.primaryLight;
-          final textPri    = AppTheme.textPrimary(brightness);
-          final textSec    = AppTheme.textSecondary(brightness);
-          final inputFill  = AppTheme.inputFill(brightness);
-          final borderCol  = AppTheme.border(brightness);
-          final dropBg     = AppTheme.surfaceColor(brightness);
+          final textPri = AppTheme.textPrimary(brightness);
+          final textSec = AppTheme.textSecondary(brightness);
+          final inputFill = AppTheme.inputFill(brightness);
+          final borderCol = AppTheme.border(brightness);
+          final dropBg = AppTheme.surfaceColor(brightness);
+          final customer = selectedCustomerId == null
+              ? null
+              : CustomerRepository.findById(
+                  int.tryParse(selectedCustomerId!) ?? -1,
+                );
+          final lead = selectedLeadId == null
+              ? null
+              : LeadRepository.findById(int.tryParse(selectedLeadId!) ?? -1);
+          final availableLeads = LeadRepository.getAll().where((item) {
+            final id = item.id.toString();
+            final alreadyLinked = OpportunityRepository.getAll().any(
+              (opportunity) =>
+                  opportunity.id != snap?.id && opportunity.leadId == id,
+            );
+            return (!alreadyLinked &&
+                    item.status != AppConstants.leadConverted) ||
+                id == selectedLeadId;
+          }).toList();
+          final availableUsers =
+              _opportunityUsers.isEmpty && currentUserId.isNotEmpty
+              ? [
+                  {
+                    'id': currentUserId,
+                    'full_name': currentUser.currentName,
+                    'email': currentUser.currentEmail,
+                  },
+                ]
+              : _opportunityUsers;
 
           return Dialog(
             backgroundColor: dialogBg,
@@ -81,13 +167,12 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
             ),
             child: ConstrainedBox(
               constraints: BoxConstraints(
-                maxWidth: 520,
-                maxHeight: MediaQuery.of(ctx).size.height * 0.88,
+                maxWidth: 560,
+                maxHeight: MediaQuery.of(ctx).size.height * 0.90,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // header
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
@@ -99,24 +184,15 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                     ),
                     child: Row(
                       children: [
-                        Container(
-                          width: 34,
-                          height: 34,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(
-                            isEdit
-                                ? Icons.edit_rounded
-                                : Icons.add_circle_outline_rounded,
-                            color: AppColors.primary,
-                            size: 18,
-                          ),
+                        Icon(
+                          isEdit
+                              ? Icons.edit_rounded
+                              : Icons.add_circle_outline_rounded,
+                          color: AppColors.primary,
                         ),
                         const SizedBox(width: 12),
                         Text(
-                          isEdit ? 'Edit Opportunity' : 'New Opportunity',
+                          isEdit ? 'Update Opportunity' : 'New Opportunity',
                           style: TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
@@ -126,17 +202,11 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                         const Spacer(),
                         IconButton(
                           onPressed: () => Navigator.pop(ctx),
-                          icon: Icon(
-                            Icons.close,
-                            color: textSec,
-                            size: 20,
-                          ),
+                          icon: Icon(Icons.close, color: textSec, size: 20),
                         ),
                       ],
                     ),
                   ),
-
-                  // body
                   Flexible(
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.all(20),
@@ -147,178 +217,390 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                           children: [
                             CustomTextField(
                               controller: nameCtrl,
+                              enabled: !isEdit,
                               label: 'Opportunity Name',
                               hint: 'e.g. Summer Campaign Package',
                               prefixIcon: Icons.work_outline_rounded,
-                              validator: (v) =>
-                                  v == null || v.trim().isEmpty
-                                      ? 'Required'
-                                      : null,
+                              validator: (v) => v == null || v.trim().isEmpty
+                                  ? 'Required'
+                                  : null,
                             ),
                             const SizedBox(height: 14),
+                            DropdownButtonFormField<String>(
+                              value:
+                                  CustomerRepository.getAll().any(
+                                    (item) =>
+                                        item.id.toString() ==
+                                        selectedCustomerId,
+                                  )
+                                  ? selectedCustomerId
+                                  : null,
+                              onChanged: (value) =>
+                                  setLocal(() => selectedCustomerId = value),
+                              decoration: const InputDecoration(
+                                labelText: 'Customer (optional)',
+                                prefixIcon: Icon(Icons.person_search_outlined),
+                              ),
+                              hint: const Text('Select a customer'),
+                              items: CustomerRepository.getAll()
+                                  .map(
+                                    (item) => DropdownMenuItem<String>(
+                                      value: item.id.toString(),
+                                      child: Text(
+                                        item.company.isEmpty
+                                            ? item.name
+                                            : '${item.name}  •  ${item.company}',
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                            const SizedBox(height: 14),
+                            DropdownButtonFormField<String>(
+                              value:
+                                  availableLeads.any(
+                                    (item) =>
+                                        item.id.toString() == selectedLeadId,
+                                  )
+                                  ? selectedLeadId
+                                  : null,
+                              onChanged: (value) =>
+                                  setLocal(() => selectedLeadId = value),
+                              decoration: const InputDecoration(
+                                labelText: 'Lead (optional)',
+                                prefixIcon: Icon(Icons.person_search_rounded),
+                              ),
+                              hint: const Text('Select a lead'),
+                              items: availableLeads
+                                  .map(
+                                    (item) => DropdownMenuItem<String>(
+                                      value: item.id.toString(),
+                                      child: Text(
+                                        item.company.trim().isEmpty
+                                            ? item.name
+                                            : '${item.name}  •  ${item.company}',
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                            if (selectedCustomerId == null &&
+                                selectedLeadId == null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: Text(
+                                  'Select a customer or a lead.',
+                                  style: TextStyle(
+                                    color: textSec,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            const SizedBox(height: 10),
+                            InputDecorator(
+                              decoration: InputDecoration(
+                                labelText: 'Company (from linked record)',
+                                prefixIcon: const Icon(Icons.business_outlined),
+                                filled: true,
+                                fillColor: inputFill,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(color: borderCol),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(color: borderCol),
+                                ),
+                              ),
+                              child: Text(
+                                customer?.company.trim().isNotEmpty == true
+                                    ? customer!.company
+                                    : lead?.company.trim().isNotEmpty == true
+                                    ? lead!.company
+                                    : customer == null && lead == null
+                                    ? 'Select a customer or lead'
+                                    : 'No company recorded for this record',
+                                style: TextStyle(
+                                  color: customer == null && lead == null
+                                      ? textSec
+                                      : textPri,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            LayoutBuilder(
+                              builder: (_, cst) {
+                                final two = cst.maxWidth > 400;
+                                final value = Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Value (ETB)',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: textPri,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    CustomTextField(
+                                      controller: valueCtrl,
+                                      hint: '45000',
+                                      prefixIcon: Icons.attach_money_rounded,
+                                      keyboardType: TextInputType.number,
+                                      validator: (v) =>
+                                          v == null || v.trim().isEmpty
+                                          ? 'Required'
+                                          : null,
+                                    ),
+                                  ],
+                                );
+                                final probabilityField = Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Probability (%)',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: textPri,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    _ProbabilityField(
+                                      initial: probability,
+                                      onChanged: (v) =>
+                                          setLocal(() => probability = v),
+                                    ),
+                                  ],
+                                );
+                                return Flex(
+                                  direction: two
+                                      ? Axis.horizontal
+                                      : Axis.vertical,
+                                  children: [
+                                    Flexible(flex: two ? 1 : 0, child: value),
+                                    SizedBox(
+                                      width: two ? 12 : 0,
+                                      height: two ? 0 : 12,
+                                    ),
+                                    Flexible(
+                                      flex: two ? 1 : 0,
+                                      child: probabilityField,
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              'Stage',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: textPri,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            _StageDropdown(
+                              value: stage,
+                              stages: const [
+                                'New',
+                                'Qualified',
+                                'Proposal',
+                                'Negotiation',
+                                'Won',
+                                'Lost',
+                              ],
+                              onChanged: (v) => setLocal(() => stage = v),
+                              fillColor: inputFill,
+                              borderColor: borderCol,
+                              dropColor: dropBg,
+                              textColor: textPri,
+                              secColor: textSec,
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              'Followed by',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: textPri,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            if (followerIds.isEmpty)
+                              Text(
+                                'No follower selected',
+                                style: TextStyle(color: textSec, fontSize: 12),
+                              ),
+                            if (followerIds.isNotEmpty)
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: followerIds
+                                    .map(
+                                      (id) => Chip(
+                                        label: Text(
+                                          followerNames[id] ?? id,
+                                          style: const TextStyle(fontSize: 11),
+                                        ),
+                                        onDeleted:
+                                            id == currentUserId &&
+                                                followerIds.length == 1
+                                            ? null
+                                            : () => setLocal(() {
+                                                followerIds.remove(id);
+                                                followerNames.remove(id);
+                                              }),
+                                      ),
+                                    )
+                                    .toList(),
+                              ),
+                            if (availableUsers.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              ...availableUsers.map((user) {
+                                final id = user['id']?.toString() ?? '';
+                                final displayName =
+                                    user['full_name']?.toString().isNotEmpty ==
+                                        true
+                                    ? user['full_name'].toString()
+                                    : user['email']?.toString() ?? id;
+                                return CheckboxListTile(
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                  value: followerIds.contains(id),
+                                  title: Text(
+                                    displayName,
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  subtitle: Text(
+                                    user['role']?.toString() ?? '',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: textSec,
+                                    ),
+                                  ),
+                                  onChanged: id.isEmpty
+                                      ? null
+                                      : (checked) => setLocal(() {
+                                          if (checked == true) {
+                                            followerIds.add(id);
+                                            followerNames[id] = displayName;
+                                          } else if (id != currentUserId ||
+                                              followerIds.length > 1) {
+                                            followerIds.remove(id);
+                                            followerNames.remove(id);
+                                          }
+                                        }),
+                                );
+                              }),
+                            ],
+                            const SizedBox(height: 8),
                             CustomTextField(
-                              controller: companyCtrl,
-                              label: 'Company',
-                              hint: 'e.g. TechWave Inc.',
-                              prefixIcon: Icons.business_outlined,
-                              validator: (v) =>
-                                  v == null || v.trim().isEmpty
-                                      ? 'Required'
-                                      : null,
+                              controller: progressCtrl,
+                              label: isEdit
+                                  ? 'Add progress note'
+                                  : 'Initial progress note',
+                              hint: 'What changed in this opportunity?',
+                              prefixIcon: Icons.notes_rounded,
+                              maxLines: 3,
                             ),
-                            const SizedBox(height: 14),
-                            LayoutBuilder(
-                              builder: (_, cst) {
-                                final two = cst.maxWidth > 400;
-                                return Flex(
-                                  direction:
-                                      two ? Axis.horizontal : Axis.vertical,
-                                  children: [
-                                    Flexible(
-                                      flex: two ? 1 : 0,
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'Value (ETB)',
-                                            style: TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w600,
-                                              color: textPri,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 6),
-                                          CustomTextField(
-                                            controller: valueCtrl,
-                                            hint: '45000',
-                                            prefixIcon:
-                                                Icons.attach_money_rounded,
-                                            keyboardType:
-                                                TextInputType.number,
-                                            validator: (v) =>
-                                                v == null ||
-                                                        v.trim().isEmpty
-                                                    ? 'Required'
-                                                    : null,
-                                          ),
-                                        ],
+                            if (isEdit) ...[
+                              const SizedBox(height: 18),
+                              Text(
+                                'Progress history',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  color: textPri,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              FutureBuilder<List<OpportunityProgress>>(
+                                future: progressHistoryFuture,
+                                builder: (context, snapshot) {
+                                  if (snapshot.connectionState ==
+                                      ConnectionState.waiting) {
+                                    return const Padding(
+                                      padding: EdgeInsets.all(16),
+                                      child: Center(
+                                        child: CircularProgressIndicator(),
                                       ),
-                                    ),
-                                    SizedBox(
-                                      width: two ? 12 : 0,
-                                      height: two ? 0 : 12,
-                                    ),
-                                    Flexible(
-                                      flex: two ? 1 : 0,
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'Probability (%)',
-                                            style: TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w600,
-                                              color: textPri,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 6),
-                                          _ProbabilityField(
-                                            initial: probability,
-                                            onChanged: (v) =>
-                                                setLocal(() => probability = v),
-                                          ),
-                                        ],
+                                    );
+                                  }
+                                  if (snapshot.hasError) {
+                                    return Text(
+                                      'Could not load progress history. Check your connection and try again.',
+                                      style: TextStyle(
+                                        color: AppColors.danger,
+                                        fontSize: 12,
                                       ),
-                                    ),
-                                  ],
-                                );
-                              },
-                            ),
-                            const SizedBox(height: 14),
-                            LayoutBuilder(
-                              builder: (_, cst) {
-                                final two = cst.maxWidth > 400;
-                                return Flex(
-                                  direction:
-                                      two ? Axis.horizontal : Axis.vertical,
-                                  children: [
-                                    Flexible(
-                                      flex: two ? 1 : 0,
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'Stage',
-                                            style: TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w600,
-                                              color: textPri,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 6),
-                                          _StageDropdown(
-                                            value: stage,
-                                            stages: const [
-                                              'New',
-                                              'Qualified',
-                                              'Proposal',
-                                              'Negotiation',
-                                              'Won',
-                                              'Lost'
-                                            ],
-                                            onChanged: (v) =>
-                                                setLocal(() => stage = v),
-                                            fillColor: inputFill,
-                                            borderColor: borderCol,
-                                            dropColor: dropBg,
-                                            textColor: textPri,
-                                            secColor: textSec,
-                                          ),
-                                        ],
+                                    );
+                                  }
+                                  final history =
+                                      snapshot.data ??
+                                      const <OpportunityProgress>[];
+                                  if (history.isEmpty) {
+                                    return Text(
+                                      'No progress history recorded yet.',
+                                      style: TextStyle(
+                                        color: textSec,
+                                        fontSize: 12,
                                       ),
-                                    ),
-                                    SizedBox(
-                                      width: two ? 12 : 0,
-                                      height: two ? 0 : 12,
-                                    ),
-                                    Flexible(
-                                      flex: two ? 1 : 0,
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'Owner',
-                                            style: TextStyle(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w600,
-                                              color: textPri,
+                                    );
+                                  }
+                                  return Column(
+                                    children: history.map((entry) {
+                                      final timestamp = entry.createdAt
+                                          .toLocal()
+                                          .toString();
+                                      return Container(
+                                        width: double.infinity,
+                                        margin: const EdgeInsets.only(
+                                          bottom: 8,
+                                        ),
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: inputFill,
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                          border: Border.all(color: borderCol),
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              entry.note,
+                                              style: TextStyle(
+                                                color: textPri,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w600,
+                                              ),
                                             ),
-                                          ),
-                                          const SizedBox(height: 6),
-                                          CustomTextField(
-                                            controller: ownerCtrl,
-                                            hint: 'Hana Tsegaye',
-                                            prefixIcon:
-                                                Icons.person_outline_rounded,
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                );
-                              },
-                            ),
+                                            const SizedBox(height: 5),
+                                            Text(
+                                              '${entry.stage} · ETB ${entry.value.toStringAsFixed(0)} · ${entry.probability}% · ${timestamp.substring(0, 16)}${entry.changedByName.isEmpty ? '' : ' · ${entry.changedByName}'}',
+                                              style: TextStyle(
+                                                color: textSec,
+                                                fontSize: 10,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    }).toList(),
+                                  );
+                                },
+                              ),
+                            ],
                           ],
                         ),
                       ),
                     ),
                   ),
-
-                  // footer
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -328,9 +610,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                         bottomRight: Radius.circular(AppConstants.radiusXL),
                       ),
                       border: Border(
-                        top: BorderSide(
-                          color: AppTheme.divider(brightness),
-                        ),
+                        top: BorderSide(color: AppTheme.divider(brightness)),
                       ),
                     ),
                     child: Row(
@@ -346,44 +626,128 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                             backgroundColor: AppColors.primary,
                             foregroundColor: Colors.white,
                           ),
-                          onPressed: () {
+                          onPressed: () async {
                             if (!fk.currentState!.validate()) return;
-
+                            if (!AccessService.requireSave(
+                              context,
+                              isEdit,
+                              'Opportunities',
+                            ))
+                              return;
+                            if (selectedCustomerId == null &&
+                                selectedLeadId == null) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Select a customer or a lead for this opportunity.',
+                                  ),
+                                  backgroundColor: AppColors.warning,
+                                ),
+                              );
+                              return;
+                            }
+                            final customer = selectedCustomerId == null
+                                ? null
+                                : CustomerRepository.findById(
+                                    int.tryParse(selectedCustomerId!) ?? -1,
+                                  );
+                            final lead = selectedLeadId == null
+                                ? null
+                                : LeadRepository.findById(
+                                    int.tryParse(selectedLeadId!) ?? -1,
+                                  );
+                            if ((selectedCustomerId != null &&
+                                    customer == null) ||
+                                (selectedLeadId != null && lead == null)) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'The selected customer or lead is no longer available.',
+                                  ),
+                                  backgroundColor: AppColors.warning,
+                                ),
+                              );
+                              return;
+                            }
+                            if (followerIds.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Select at least one follower.',
+                                  ),
+                                  backgroundColor: AppColors.warning,
+                                ),
+                              );
+                              return;
+                            }
+                            setLocal(() {});
+                            final note = progressCtrl.text.trim();
+                            final now = DateTime.now();
                             final opp = Opportunity(
                               id: isEdit
                                   ? snap!.id
                                   : OpportunityRepository.nextId(),
                               name: nameCtrl.text.trim(),
-                              company: companyCtrl.text.trim(),
-                              value: double.tryParse(
-                                      valueCtrl.text.trim()) ??
-                                  0,
-                              owner: ownerCtrl.text.trim().isEmpty
-                                  ? 'Hana Tsegaye'
-                                  : ownerCtrl.text.trim(),
+                              company:
+                                  (customer?.company.trim().isNotEmpty == true
+                                  ? customer!.company.trim()
+                                  : lead?.company.trim() ?? ''),
+                              value:
+                                  double.tryParse(valueCtrl.text.trim()) ?? 0,
+                              owner: followerNames.values
+                                  .where((name) => name.isNotEmpty)
+                                  .join(', '),
                               probability: probability,
                               stage: stage,
-                              createdAt: isEdit
-                                  ? snap!.createdAt
-                                  : DateTime.now(),
+                              leadId: selectedLeadId,
+                              customerId: selectedCustomerId,
+                              createdAt: isEdit ? snap!.createdAt : now,
+                              createdBy: snap?.createdBy ?? currentUserId,
+                              lastProgress: note.isEmpty
+                                  ? snap?.lastProgress ?? ''
+                                  : note,
+                              lastProgressAt: note.isEmpty
+                                  ? snap?.lastProgressAt
+                                  : now,
+                              lastProgressBy: note.isEmpty
+                                  ? snap?.lastProgressBy ?? ''
+                                  : currentUser.currentName,
+                              followerIds: followerIds.toList(),
+                              followerNames: followerIds
+                                  .map((id) => followerNames[id] ?? id)
+                                  .toList(),
                             );
-
-                            if (!AccessService.requireSave(context, isEdit, 'Opportunities')) {
+                            final saved = await OpportunityRepository.save(
+                              opp,
+                              progressNote: note.isEmpty ? null : note,
+                              followers: followerIds
+                                  .map(
+                                    (id) => {
+                                      'id': id,
+                                      'name': followerNames[id] ?? id,
+                                    },
+                                  )
+                                  .toList(),
+                            );
+                            if (!ctx.mounted) return;
+                            if (!saved) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Opportunity could not be saved remotely.',
+                                  ),
+                                  backgroundColor: AppColors.danger,
+                                ),
+                              );
                               return;
                             }
-                            setState(() {
-                              isEdit
-                                  ? OpportunityRepository.update(opp)
-                                  : OpportunityRepository.add(opp);
-                            });
-
+                            setState(() {});
                             Navigator.pop(ctx);
-
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(
                                   isEdit
-                                      ? 'Opportunity updated'
+                                      ? 'Opportunity updated with progress history'
                                       : 'Opportunity added',
                                 ),
                                 backgroundColor: AppColors.success,
@@ -392,7 +756,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                             );
                           },
                           child: Text(
-                            isEdit ? 'Save Changes' : 'Add Opportunity',
+                            isEdit ? 'Save Progress' : 'Add Opportunity',
                           ),
                         ),
                       ],
@@ -409,6 +773,12 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
 
   void _showViewDialog(Opportunity o) {
     final color = _stageColor(o.stage);
+    final lead = _leadFor(o);
+    final customer = _customerFor(o);
+    final leadContact = [
+      if (lead?.email.isNotEmpty == true) lead!.email,
+      if (lead?.phone.isNotEmpty == true) lead!.phone,
+    ].join(' · ');
 
     // ONLY CHANGE: $ → ETB
     final valueStr = o.value >= 1000
@@ -427,9 +797,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
           backgroundColor: dialogBg,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppConstants.radiusXL),
-            side: BorderSide(
-              color: AppTheme.border(brightness),
-            ),
+            side: BorderSide(color: AppTheme.border(brightness)),
           ),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 440),
@@ -473,24 +841,15 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                             const SizedBox(height: 2),
                             Text(
                               o.company,
-                              style: TextStyle(
-                                color: textSec,
-                                fontSize: 12,
-                              ),
+                              style: TextStyle(color: textSec, fontSize: 12),
                             ),
                           ],
                         ),
                       ),
-                      _StagePill(
-                        stage: o.stage,
-                        color: color,
-                      ),
+                      _StagePill(stage: o.stage, color: color),
                     ],
                   ),
-                  Divider(
-                    height: 28,
-                    color: AppTheme.divider(brightness),
-                  ),
+                  Divider(height: 28, color: AppTheme.divider(brightness)),
                   _DetailRow(
                     icon: Icons.attach_money_rounded,
                     label: 'Value',
@@ -507,6 +866,39 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                     textSec: textSec,
                     textPri: textPri,
                   ),
+                  if (lead != null) ...[
+                    const SizedBox(height: 12),
+                    _DetailRow(
+                      icon: Icons.person_search_outlined,
+                      label: 'Linked lead',
+                      value: lead.name,
+                      textSec: textSec,
+                      textPri: textPri,
+                    ),
+                    const SizedBox(height: 12),
+                    _DetailRow(
+                      icon: Icons.email_outlined,
+                      label: 'Lead contact',
+                      value: leadContact.isEmpty
+                          ? 'No contact details'
+                          : leadContact,
+                      textSec: textSec,
+                      textPri: textPri,
+                    ),
+                  ],
+                  if (customer != null) ...[
+                    const SizedBox(height: 12),
+                    _DetailRow(
+                      icon: Icons.business_outlined,
+                      label: 'Linked customer',
+                      value: [
+                        customer.name,
+                        if (customer.email.isNotEmpty) customer.email,
+                      ].join(' · '),
+                      textSec: textSec,
+                      textPri: textPri,
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   _DetailRow(
                     icon: Icons.percent_rounded,
@@ -531,8 +923,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                       value: o.probability / 100,
                       minHeight: 8,
                       backgroundColor: color.withValues(alpha: 0.1),
-                      valueColor:
-                          AlwaysStoppedAnimation<Color>(color),
+                      valueColor: AlwaysStoppedAnimation<Color>(color),
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -549,10 +940,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                           backgroundColor: AppColors.primary,
                           foregroundColor: Colors.white,
                         ),
-                        icon: const Icon(
-                          Icons.edit_outlined,
-                          size: 16,
-                        ),
+                        icon: const Icon(Icons.edit_outlined, size: 16),
                         label: const Text('Edit'),
                         onPressed: () {
                           Navigator.pop(ctx);
@@ -579,11 +967,8 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
         return AlertDialog(
           backgroundColor: AppTheme.surfaceColor(brightness),
           shape: RoundedRectangleBorder(
-            borderRadius:
-                BorderRadius.circular(AppConstants.radiusLarge),
-            side: BorderSide(
-              color: AppTheme.border(brightness),
-            ),
+            borderRadius: BorderRadius.circular(AppConstants.radiusLarge),
+            side: BorderSide(color: AppTheme.border(brightness)),
           ),
           title: Row(
             children: [
@@ -624,9 +1009,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                 if (!AccessService.requireDelete(context, 'Opportunities')) {
                   return;
                 }
-                setState(
-                  () => OpportunityRepository.remove(o.id),
-                );
+                setState(() => OpportunityRepository.remove(o.id));
                 Navigator.pop(ctx);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -649,15 +1032,6 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
   @override
   Widget build(BuildContext context) {
     final brightness = Theme.of(context).brightness;
-    final all = OpportunityRepository.getAll();
-    final openOps = all
-        .where((o) => o.stage != 'Won' && o.stage != 'Lost')
-        .length;
-    final pipelineVal = all
-        .where((o) => o.stage != 'Won' && o.stage != 'Lost')
-        .fold(0.0, (s, o) => s + o.value);
-    final won = all.where((o) => o.stage == 'Won').length;
-    final lost = all.where((o) => o.stage == 'Lost').length;
     final filtered = _filtered;
 
     return CustomScrollView(
@@ -683,15 +1057,6 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _StatsRow(
-                  open: openOps,
-                  pipelineValue: pipelineVal,
-                  won: won,
-                  lost: lost,
-                ),
-                const SizedBox(
-                  height: AppConstants.sectionSpacing,
-                ),
                 _Toolbar(
                   searchController: _searchController,
                   filterStage: _filterStage,
@@ -701,11 +1066,10 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                     'Qualified',
                     'Proposal',
                     'Negotiation',
-                    'Won'
+                    'Won',
                   ],
                   onSearchChanged: (_) => setState(() {}),
-                  onStageChanged: (v) =>
-                      setState(() => _filterStage = v),
+                  onStageChanged: (v) => setState(() => _filterStage = v),
                   onAdd: () => _showAddEditDialog(),
                 ),
                 const SizedBox(height: 16),
@@ -714,8 +1078,7 @@ class _OpportunitiesScreenState extends State<OpportunitiesScreen> {
                     : _KanbanBoard(
                         opportunities: filtered,
                         onView: _showViewDialog,
-                        onEdit: (o) =>
-                            _showAddEditDialog(existing: o),
+                        onEdit: (o) => _showAddEditDialog(existing: o),
                         onDelete: _confirmDelete,
                       ),
                 const SizedBox(height: 32),
@@ -776,9 +1139,7 @@ class _StatsRow extends StatelessWidget {
     return LayoutBuilder(
       builder: (_, cst) {
         final cols = cst.maxWidth < 600 ? 2 : 4;
-        final w = (cst.maxWidth -
-                (cols - 1) * AppConstants.itemSpacing) /
-            cols;
+        final w = (cst.maxWidth - (cols - 1) * AppConstants.itemSpacing) / cols;
 
         return Wrap(
           spacing: AppConstants.itemSpacing,
@@ -847,11 +1208,8 @@ class _StatCard extends StatelessWidget {
       padding: const EdgeInsets.all(AppConstants.cardPadding),
       decoration: BoxDecoration(
         color: AppTheme.cardColor(brightness),
-        borderRadius:
-            BorderRadius.circular(AppConstants.radiusLarge),
-        border: Border.all(
-          color: AppTheme.border(brightness),
-        ),
+        borderRadius: BorderRadius.circular(AppConstants.radiusLarge),
+        border: Border.all(color: AppTheme.border(brightness)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -879,11 +1237,7 @@ class _StatCard extends StatelessWidget {
                     AppConstants.radiusMedium,
                   ),
                 ),
-                child: Icon(
-                  icon,
-                  size: 18,
-                  color: color,
-                ),
+                child: Icon(icon, size: 18, color: color),
               ),
             ],
           ),
@@ -941,35 +1295,20 @@ class _Toolbar extends StatelessWidget {
             child: TextField(
               controller: searchController,
               onChanged: onSearchChanged,
-              style: TextStyle(
-                fontSize: 13,
-                color: textPri,
-              ),
+              style: TextStyle(fontSize: 13, color: textPri),
               decoration: InputDecoration(
                 hintText: 'Search opportunities…',
-                hintStyle: TextStyle(
-                  fontSize: 13,
-                  color: textSec,
-                ),
-                prefixIcon: Icon(
-                  Icons.search,
-                  size: 18,
-                  color: textSec,
-                ),
-                suffixIcon:
-                    searchController.text.isNotEmpty
-                        ? IconButton(
-                            icon: Icon(
-                              Icons.close,
-                              size: 16,
-                              color: textSec,
-                            ),
-                            onPressed: () {
-                              searchController.clear();
-                              onSearchChanged('');
-                            },
-                          )
-                        : null,
+                hintStyle: TextStyle(fontSize: 13, color: textSec),
+                prefixIcon: Icon(Icons.search, size: 18, color: textSec),
+                suffixIcon: searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: Icon(Icons.close, size: 16, color: textSec),
+                        onPressed: () {
+                          searchController.clear();
+                          onSearchChanged('');
+                        },
+                      )
+                    : null,
                 filled: true,
                 fillColor: inputFill,
                 contentPadding: EdgeInsets.zero,
@@ -977,17 +1316,13 @@ class _Toolbar extends StatelessWidget {
                   borderRadius: BorderRadius.circular(
                     AppConstants.radiusMedium,
                   ),
-                  borderSide: BorderSide(
-                    color: borderCol,
-                  ),
+                  borderSide: BorderSide(color: borderCol),
                 ),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(
                     AppConstants.radiusMedium,
                   ),
-                  borderSide: BorderSide(
-                    color: borderCol,
-                  ),
+                  borderSide: BorderSide(color: borderCol),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(
@@ -1051,7 +1386,7 @@ class _KanbanBoard extends StatelessWidget {
     'Qualified',
     'Proposal',
     'Negotiation',
-    'Won'
+    'Won',
   ];
 
   @override
@@ -1114,16 +1449,12 @@ class _KanbanBoard extends StatelessWidget {
         return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: _stageOrder.map((stage) {
-            final items = opportunities
-                .where((o) => o.stage == stage)
-                .toList();
+            final items = opportunities.where((o) => o.stage == stage).toList();
             final isLast = stage == _stageOrder.last;
 
             return Expanded(
               child: Padding(
-                padding: EdgeInsets.only(
-                  right: isLast ? 0 : 12,
-                ),
+                padding: EdgeInsets.only(right: isLast ? 0 : 12),
                 child: _KanbanColumn(
                   stage: stage,
                   items: items,
@@ -1170,11 +1501,8 @@ class _KanbanColumn extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: cardBg,
-        borderRadius:
-            BorderRadius.circular(AppConstants.radiusLarge),
-        border: Border.all(
-          color: borderCol,
-        ),
+        borderRadius: BorderRadius.circular(AppConstants.radiusLarge),
+        border: Border.all(color: borderCol),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1182,10 +1510,7 @@ class _KanbanColumn extends StatelessWidget {
         children: [
           // column header
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 11,
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.08),
               borderRadius: const BorderRadius.vertical(
@@ -1235,11 +1560,7 @@ class _KanbanColumn extends StatelessWidget {
               ],
             ),
           ),
-          Divider(
-            height: 1,
-            thickness: 1,
-            color: borderCol,
-          ),
+          Divider(height: 1, thickness: 1, color: borderCol),
 
           // cards
           if (items.isEmpty)
@@ -1261,8 +1582,7 @@ class _KanbanColumn extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   for (int i = 0; i < items.length; i++) ...[
-                    if (i > 0)
-                      const SizedBox(height: 8),
+                    if (i > 0) const SizedBox(height: 8),
                     _OpportunityCard(
                       opportunity: items[i],
                       color: color,
@@ -1298,8 +1618,7 @@ class _OpportunityCard extends StatefulWidget {
   });
 
   @override
-  State<_OpportunityCard> createState() =>
-      _OpportunityCardState();
+  State<_OpportunityCard> createState() => _OpportunityCardState();
 }
 
 class _OpportunityCardState extends State<_OpportunityCard> {
@@ -1315,8 +1634,7 @@ class _OpportunityCardState extends State<_OpportunityCard> {
     final normalBg = AppTheme.surfaceVariant(brightness);
     final hoverBg = AppTheme.tableRowHover(brightness);
     final borderCol = AppTheme.border(brightness);
-    final hoverBdr =
-        AppColors.primary.withValues(alpha: 0.35);
+    final hoverBdr = AppColors.primary.withValues(alpha: 0.35);
 
     // ONLY CHANGE: $ → ETB
     final valueStr = o.value >= 1000
@@ -1326,20 +1644,15 @@ class _OpportunityCardState extends State<_OpportunityCard> {
     final menuBg = AppTheme.surfaceColor(brightness);
 
     return MouseRegion(
-      onEnter: (_) =>
-          setState(() => _hovered = true),
-      onExit: (_) =>
-          setState(() => _hovered = false),
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
       child: AnimatedContainer(
         duration: AppConstants.animFast,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: _hovered ? hoverBg : normalBg,
-          borderRadius:
-              BorderRadius.circular(AppConstants.radiusMedium),
-          border: Border.all(
-            color: _hovered ? hoverBdr : borderCol,
-          ),
+          borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
+          border: Border.all(color: _hovered ? hoverBdr : borderCol),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1366,11 +1679,8 @@ class _OpportunityCardState extends State<_OpportunityCard> {
                     padding: EdgeInsets.zero,
                     color: menuBg,
                     shape: RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(10),
-                      side: BorderSide(
-                        color: borderCol,
-                      ),
+                      borderRadius: BorderRadius.circular(10),
+                      side: BorderSide(color: borderCol),
                     ),
                     icon: Icon(
                       Icons.more_vert_rounded,
@@ -1402,10 +1712,7 @@ class _OpportunityCardState extends State<_OpportunityCard> {
                             const SizedBox(width: 8),
                             Text(
                               'View',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: textPri,
-                              ),
+                              style: TextStyle(fontSize: 13, color: textPri),
                             ),
                           ],
                         ),
@@ -1423,10 +1730,7 @@ class _OpportunityCardState extends State<_OpportunityCard> {
                             const SizedBox(width: 8),
                             Text(
                               'Edit',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: textPri,
-                              ),
+                              style: TextStyle(fontSize: 13, color: textPri),
                             ),
                           ],
                         ),
@@ -1460,20 +1764,13 @@ class _OpportunityCardState extends State<_OpportunityCard> {
             const SizedBox(height: 5),
             Text(
               o.company,
-              style: TextStyle(
-                fontSize: 11,
-                color: textSec,
-              ),
+              style: TextStyle(fontSize: 11, color: textSec),
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 10),
             Row(
               children: [
-                Icon(
-                  Icons.attach_money_rounded,
-                  size: 13,
-                  color: color,
-                ),
+                Icon(Icons.attach_money_rounded, size: 13, color: color),
                 const SizedBox(width: 3),
                 Text(
                   valueStr,
@@ -1484,19 +1781,12 @@ class _OpportunityCardState extends State<_OpportunityCard> {
                   ),
                 ),
                 const Spacer(),
-                Icon(
-                  Icons.person_outline_rounded,
-                  size: 12,
-                  color: textSec,
-                ),
+                Icon(Icons.person_outline_rounded, size: 12, color: textSec),
                 const SizedBox(width: 3),
                 Flexible(
                   child: Text(
                     o.owner,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: textSec,
-                    ),
+                    style: TextStyle(fontSize: 11, color: textSec),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
@@ -1507,16 +1797,12 @@ class _OpportunityCardState extends State<_OpportunityCard> {
               children: [
                 Expanded(
                   child: ClipRRect(
-                    borderRadius:
-                        BorderRadius.circular(3),
+                    borderRadius: BorderRadius.circular(3),
                     child: LinearProgressIndicator(
                       value: o.probability / 100,
                       minHeight: 5,
-                      backgroundColor:
-                          color.withValues(alpha: 0.1),
-                      valueColor:
-                          AlwaysStoppedAnimation<Color>(
-                              color),
+                      backgroundColor: color.withValues(alpha: 0.1),
+                      valueColor: AlwaysStoppedAnimation<Color>(color),
                     ),
                   ),
                 ),
@@ -1546,22 +1832,15 @@ class _StagePill extends StatelessWidget {
   final String stage;
   final Color color;
 
-  const _StagePill({
-    required this.stage,
-    required this.color,
-  });
+  const _StagePill({required this.stage, required this.color});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 10,
-        vertical: 4,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
-        borderRadius:
-            BorderRadius.circular(AppConstants.radiusSmall),
+        borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
       ),
       child: Text(
         stage,
@@ -1594,19 +1873,9 @@ class _DetailRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Icon(
-          icon,
-          size: 16,
-          color: textSec,
-        ),
+        Icon(icon, size: 16, color: textSec),
         const SizedBox(width: 8),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            color: textSec,
-          ),
-        ),
+        Text(label, style: TextStyle(fontSize: 13, color: textSec)),
         const Spacer(),
         Text(
           value,
@@ -1625,26 +1894,19 @@ class _ProbabilityField extends StatefulWidget {
   final int initial;
   final ValueChanged<int> onChanged;
 
-  const _ProbabilityField({
-    required this.initial,
-    required this.onChanged,
-  });
+  const _ProbabilityField({required this.initial, required this.onChanged});
 
   @override
-  State<_ProbabilityField> createState() =>
-      _ProbabilityFieldState();
+  State<_ProbabilityField> createState() => _ProbabilityFieldState();
 }
 
-class _ProbabilityFieldState
-    extends State<_ProbabilityField> {
+class _ProbabilityFieldState extends State<_ProbabilityField> {
   late final TextEditingController _ctrl;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = TextEditingController(
-      text: '${widget.initial}',
-    );
+    _ctrl = TextEditingController(text: '${widget.initial}');
   }
 
   @override
@@ -1692,17 +1954,11 @@ class _StageDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 4,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
         color: fillColor,
-        borderRadius:
-            BorderRadius.circular(AppConstants.radiusMedium),
-        border: Border.all(
-          color: borderColor,
-        ),
+        borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
+        border: Border.all(color: borderColor),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
@@ -1714,20 +1970,14 @@ class _StageDropdown extends StatelessWidget {
             size: 16,
             color: AppColors.primary,
           ),
-          style: TextStyle(
-            fontSize: 13,
-            color: textColor,
-          ),
+          style: TextStyle(fontSize: 13, color: textColor),
           items: stages
               .map(
                 (s) => DropdownMenuItem(
                   value: s,
                   child: Text(
                     s,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: textColor,
-                    ),
+                    style: TextStyle(fontSize: 13, color: textColor),
                   ),
                 ),
               )
@@ -1749,11 +1999,8 @@ class _EmptyState extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 60),
       decoration: BoxDecoration(
         color: AppTheme.cardColor(brightness),
-        borderRadius:
-            BorderRadius.circular(AppConstants.radiusLarge),
-        border: Border.all(
-          color: AppTheme.border(brightness),
-        ),
+        borderRadius: BorderRadius.circular(AppConstants.radiusLarge),
+        border: Border.all(color: AppTheme.border(brightness)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1761,8 +2008,7 @@ class _EmptyState extends StatelessWidget {
           Icon(
             Icons.trending_up_outlined,
             size: 52,
-            color: AppTheme.textSecondary(brightness)
-                .withValues(alpha: 0.25),
+            color: AppTheme.textSecondary(brightness).withValues(alpha: 0.25),
           ),
           const SizedBox(height: 14),
           Text(
@@ -1791,15 +2037,11 @@ class _EmptyState extends StatelessWidget {
 // Sticky header delegate — wraps _PageHeaderBar in a SliverPersistentHeader
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _PageHeaderDelegate
-    extends SliverPersistentHeaderDelegate {
+class _PageHeaderDelegate extends SliverPersistentHeaderDelegate {
   final VoidCallback onAdd;
   final Brightness brightness;
 
-  const _PageHeaderDelegate({
-    required this.onAdd,
-    required this.brightness,
-  });
+  const _PageHeaderDelegate({required this.onAdd, required this.brightness});
 
   // Narrow layout: icon row + button stacked → ~110 px; wide layout → ~72 px.
   // We use a fixed extent (maxExtent == minExtent) so the header never shrinks.
@@ -1812,10 +2054,8 @@ class _PageHeaderDelegate
   double get maxExtent => _height;
 
   @override
-  bool shouldRebuild(
-      _PageHeaderDelegate old) =>
-      old.onAdd != onAdd ||
-      old.brightness != brightness;
+  bool shouldRebuild(_PageHeaderDelegate old) =>
+      old.onAdd != onAdd || old.brightness != brightness;
 
   @override
   Widget build(
@@ -1836,8 +2076,7 @@ class _PageHeaderDelegate
         ),
         child: _PageHeaderBar(
           title: 'Opportunities',
-          subtitle:
-              'Track potential deals and expected revenue.',
+          subtitle: 'Track potential deals and expected revenue.',
           icon: Icons.trending_up_rounded,
           onAdd: onAdd,
         ),
@@ -1874,49 +2113,29 @@ class _PageHeaderBar extends StatelessWidget {
 
         final titleBlock = Row(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment:
-              CrossAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Container(
               width: 38,
               height: 38,
               decoration: BoxDecoration(
-                color: AppColors.primary
-                    .withValues(alpha: 0.12),
-                borderRadius:
-                    BorderRadius.circular(
-                        AppConstants.radiusMedium),
+                color: AppColors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
               ),
-              child: Icon(
-                icon,
-                size: 20,
-                color: AppColors.primary,
-              ),
+              child: Icon(icon, size: 20, color: AppColors.primary),
             ),
             const SizedBox(width: 12),
             Column(
-              mainAxisAlignment:
-                  MainAxisAlignment.center,
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   title,
-                  style: Theme.of(context)
-                      .textTheme
-                      .headlineSmall
-                      ?.copyWith(
-                        fontWeight:
-                            FontWeight.w700,
-                      ),
-                ),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    color: textSec,
-                    fontSize: 12,
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
+                Text(subtitle, style: TextStyle(color: textSec, fontSize: 12)),
               ],
             ),
           ],
@@ -1924,13 +2143,8 @@ class _PageHeaderBar extends StatelessWidget {
 
         final actions = ElevatedButton.icon(
           onPressed: onAdd,
-          icon: const Icon(
-            Icons.add,
-            size: 16,
-          ),
-          label: const Text(
-            'Add Opportunity',
-          ),
+          icon: const Icon(Icons.add, size: 16),
+          label: const Text('Add Opportunity'),
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.primary,
             foregroundColor: Colors.white,
@@ -1939,24 +2153,13 @@ class _PageHeaderBar extends StatelessWidget {
 
         if (narrow) {
           return Column(
-            crossAxisAlignment:
-                CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
-            children: [
-              titleBlock,
-              const SizedBox(height: 8),
-              actions,
-            ],
+            children: [titleBlock, const SizedBox(height: 8), actions],
           );
         }
 
-        return Row(
-          children: [
-            titleBlock,
-            const Spacer(),
-            actions,
-          ],
-        );
+        return Row(children: [titleBlock, const Spacer(), actions]);
       },
     );
   }
