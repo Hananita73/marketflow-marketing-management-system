@@ -134,20 +134,25 @@ class BudgetRequestRepository {
     }
   }
 
-  static void add(BudgetRequest req) {
+  static Future<bool> add(BudgetRequest req) async {
+    if (SupabaseConfig.isConfigured && !await _upsert(req)) return false;
     _items.insert(0, req);
-    _upsert(req);
+    return true;
   }
 
-  static void update(BudgetRequest req) {
+  static Future<bool> update(BudgetRequest req) async {
     final idx = _items.indexWhere((r) => r.id == req.id);
-    if (idx != -1) _items[idx] = req;
-    _upsert(req);
+    if (idx == -1) return false;
+    if (SupabaseConfig.isConfigured && !await _upsert(req)) return false;
+    _items[idx] = req;
+    return true;
   }
 
-  static void remove(String id) {
+  static Future<bool> remove(String id) async {
+    if (!_items.any((request) => request.id == id)) return false;
+    if (SupabaseConfig.isConfigured && !await _delete(id)) return false;
     _items.removeWhere((r) => r.id == id);
-    _delete(id);
+    return true;
   }
 
   static String nextId() {
@@ -158,21 +163,23 @@ class BudgetRequestRepository {
     return 'BR${(maxNum + 1).toString().padLeft(3, '0')}';
   }
 
-  static Future<void> _upsert(BudgetRequest req) async {
-    if (!SupabaseConfig.isConfigured) return;
+  static Future<bool> _upsert(BudgetRequest req) async {
+    if (!SupabaseConfig.isConfigured) return true;
     try {
       await Supabase.instance.client
           .from(_table)
           .upsert(req.toRow())
           .timeout(const Duration(seconds: 6));
+      return true;
     } catch (e) {
       AdminAlertService.reportStoreFailure(
           table: _table, operation: 'write', error: e);
+      return false;
     }
   }
 
-  static Future<void> _delete(String id) async {
-    if (!SupabaseConfig.isConfigured) return;
+  static Future<bool> _delete(String id) async {
+    if (!SupabaseConfig.isConfigured) return true;
     try {
       final rows = await Supabase.instance.client
           .from(_table)
@@ -186,10 +193,13 @@ class BudgetRequestRepository {
           operation: 'delete',
           error: StateError('No matching row was deleted.'),
         );
+        return false;
       }
+      return true;
     } catch (e) {
       AdminAlertService.reportStoreFailure(
           table: _table, operation: 'delete', error: e);
+      return false;
     }
   }
 }

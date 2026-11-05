@@ -248,7 +248,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
                     TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
                     const SizedBox(width: 8),
                     ElevatedButton.icon(
-                      onPressed: () {
+                      onPressed: () async {
                         if (!fk.currentState!.validate()) return;
                         final req = BudgetRequest(
                           id: BudgetRequestRepository.nextId(),
@@ -263,7 +263,15 @@ class _BudgetScreenState extends State<BudgetScreen> {
                           reviewComments: '',
                           createdAt: DateTime.now(),
                         );
-                        BudgetRequestRepository.add(req);
+                        final saved = await BudgetRequestRepository.add(req);
+                        if (!ctx.mounted) return;
+                        if (!saved) {
+                          _showSnack(
+                            'Budget request could not be saved remotely. Check your connection and permissions.',
+                            error: true,
+                          );
+                          return;
+                        }
                         AuditLogService.logSubmit('Budget', req.id, 'Budget Request ${req.id}',
                             details: {'amount': req.requestedAmount});
                         NotificationRepository.add(
@@ -273,7 +281,11 @@ class _BudgetScreenState extends State<BudgetScreen> {
                         );
                         setState(_reload);
                         Navigator.pop(ctx);
-                        _showSnack('Budget request submitted for approval.');
+                        _showSnack(
+                          SupabaseConfig.isConfigured
+                              ? 'Budget request submitted for approval.'
+                              : 'Budget request saved locally (remote database is not configured).',
+                        );
                       },
                       icon: const Icon(Icons.send_outlined, size: 16),
                       label: const Text('Submit Request'),
