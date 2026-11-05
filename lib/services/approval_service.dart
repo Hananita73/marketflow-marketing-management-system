@@ -141,12 +141,20 @@ class ApprovalService {
       return false;
     }
     final approver = AuthService().currentName;
-    BudgetRequestRepository.update(req.copyWith(
+    final saved = await BudgetRequestRepository.update(req.copyWith(
       status: 'Approved',
       reviewedBy: approver,
       reviewComments: 'Approved',
       reviewedAt: DateTime.now(),
     ));
+    if (!saved) {
+      _snack(
+        context,
+        'Budget request approval could not be saved remotely.',
+        color: AppColors.danger,
+      );
+      return false;
+    }
     AuditLogService.logApprove('Budget', reqId, 'Budget Request $reqId',
         details: {'approved_by': approver, 'amount': req.requestedAmount});
     _snack(context, 'Budget request approved.', color: AppColors.success);
@@ -168,12 +176,20 @@ class ApprovalService {
         await showRejectDialog(context, title: 'Reject Budget Request');
     if (reason == null) return false;
     final approver = AuthService().currentName;
-    BudgetRequestRepository.update(req.copyWith(
+    final saved = await BudgetRequestRepository.update(req.copyWith(
       status: 'Rejected',
       reviewedBy: approver,
       reviewComments: reason,
       reviewedAt: DateTime.now(),
     ));
+    if (!saved) {
+      _snack(
+        context,
+        'Budget request rejection could not be saved remotely.',
+        color: AppColors.danger,
+      );
+      return false;
+    }
     AuditLogService.logReject('Budget', reqId, 'Budget Request $reqId',
         details: {'rejected_by': approver, 'reason': reason});
     _snack(context, 'Budget request rejected.', color: AppColors.warning);
