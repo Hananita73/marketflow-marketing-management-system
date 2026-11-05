@@ -1,6 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import '../../core/colors.dart';
 import '../../services/auth_service.dart';
+import '../../utils/input_validators.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show Supabase;
 import '../../widgets/common/custom_button.dart';
 import '../../widgets/common/custom_textfield.dart';
@@ -36,10 +37,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   String? _validateEmail(String? v) {
-    if (v == null || v.trim().isEmpty) return 'Email is required';
-    final regex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+');
-    if (!regex.hasMatch(v.trim())) return 'Enter a valid email address';
-    return null;
+    return InputValidators.email(v);
   }
 
   String? _validatePassword(String? v) {

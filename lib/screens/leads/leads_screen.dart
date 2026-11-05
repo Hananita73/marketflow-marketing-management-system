@@ -14,6 +14,7 @@ import '../../widgets/common/custom_textfield.dart';
 import '../../widgets/charts/lead_funnel_chart.dart';
 import '../../widgets/charts/lead_sources_chart.dart';
 import '../../widgets/badges/status_badge.dart';
+import '../../utils/input_validators.dart';
 
 // -----------------------------------------------------------------------------
 // LeadsScreen � selfScrolling: true in routes.dart
@@ -163,18 +164,14 @@ class _LeadsScreenState extends State<LeadsScreen> {
                               hint: 'name@company.com',
                               prefixIcon: Icons.email_outlined,
                               keyboardType: TextInputType.emailAddress,
-                              validator: (v) {
-                                if (v == null || v.trim().isEmpty) return 'Required';
-                                if (!v.contains('@')) return 'Invalid email';
-                                return null;
-                              })),
+                              validator: InputValidators.email)),
                           SizedBox(width: two ? 12 : 0, height: two ? 0 : 12),
                           Flexible(flex: two ? 1 : 0, child: CustomTextField(
                               controller: phoneCtrl, label: 'Phone',
                               hint: '+251 9XX XXX XXX',
                               prefixIcon: Icons.phone_outlined,
                               keyboardType: TextInputType.phone,
-                              validator: (v) => v == null || v.trim().isEmpty ? 'Required' : null)),
+                              validator: InputValidators.ethiopianPhone)),
                         ]);
                       }),
                       const SizedBox(height: 14),
@@ -1483,4 +1480,3 @@ class _Pagination extends StatelessWidget {
     ]);
   }
 }
-

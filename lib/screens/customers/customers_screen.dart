@@ -7,6 +7,7 @@ import '../../models/campaign.dart';
 import '../../models/campaign_customer.dart';
 import '../../models/customer.dart';
 import '../../widgets/common/custom_textfield.dart';
+import '../../utils/input_validators.dart';
 import '../../widgets/charts/customer_growth_chart.dart';
 import '../../widgets/charts/customer_segments_chart.dart';
 import '../../widgets/badges/status_badge.dart';
@@ -437,9 +438,9 @@ class _CustomersScreenState extends State<CustomersScreen> {
                           children: [
                             CustomTextField(controller: nameCtrl,  label: 'Full Name',    hint: 'e.g. Abebe Kebede',    prefixIcon: Icons.person_outline_rounded, validator: (v) => v == null || v.trim().isEmpty ? 'Required' : null),
                             const SizedBox(height: 14),
-                            CustomTextField(controller: emailCtrl, label: 'Email Address', hint: 'name@company.com',    prefixIcon: Icons.email_outlined, keyboardType: TextInputType.emailAddress, validator: (v) { if (v == null || v.trim().isEmpty) return 'Required'; if (!v.contains('@')) return 'Invalid email'; return null; }),
+                            CustomTextField(controller: emailCtrl, label: 'Email Address', hint: 'name@company.com',    prefixIcon: Icons.email_outlined, keyboardType: TextInputType.emailAddress, validator: InputValidators.email),
                             const SizedBox(height: 14),
-                            CustomTextField(controller: phoneCtrl, label: 'Phone Number', hint: '+251 9XX XXX XXX', prefixIcon: Icons.phone_outlined, keyboardType: TextInputType.phone, validator: (v) => v == null || v.trim().isEmpty ? 'Required' : null),
+                            CustomTextField(controller: phoneCtrl, label: 'Phone Number', hint: '09XX XXX XXXX or 07XX XXX XXXX', prefixIcon: Icons.phone_outlined, keyboardType: TextInputType.phone, validator: InputValidators.ethiopianPhone),
                             const SizedBox(height: 14),
                             Row(children: [
                               Expanded(child: _DialogDropdown(label: 'Status',  value: status,  items: const ['Active','Draft','Paused','Completed','Cancelled','Pending'], fillColor: inputFill, borderColor: borderCol, dropColor: dropBg, textColor: textPri, secColor: textSec, onChanged: (v) => setLocal(() => status  = v))),
