@@ -48,12 +48,21 @@ class CampaignCustomerRemoteStore {
   static Future<bool> delete(String campaignId, int customerId) async {
     if (!SupabaseConfig.isConfigured) return false;
     try {
-      await Supabase.instance.client
+      final rows = await Supabase.instance.client
           .from(_table)
           .delete()
           .eq('campaign_id', campaignId)
           .eq('customer_id', customerId)
+          .select('campaign_id')
           .timeout(const Duration(seconds: 6));
+      if (rows.isEmpty) {
+        AdminAlertService.reportStoreFailure(
+          table: _table,
+          operation: 'delete',
+          error: StateError('No matching row was deleted.'),
+        );
+        return false;
+      }
       return true;
     } catch (e) {
       AdminAlertService.reportStoreFailure(
@@ -70,6 +79,7 @@ class CampaignCustomerRemoteStore {
         'engagement_status': a.engagementStatus,
         'conversion_status': a.conversionStatus,
         'notes': a.notes,
+        'allocated_amount': a.allocatedAmount,
       };
 
   static CampaignCustomer _fromRow(Map<String, dynamic> r) {
@@ -92,6 +102,9 @@ class CampaignCustomerRemoteStore {
       conversionStatus:
           r['conversion_status']?.toString() ?? AppConstants.conversionNotConverted,
       notes: r['notes']?.toString() ?? '',
+      allocatedAmount: r['allocated_amount'] is num
+          ? (r['allocated_amount'] as num).toDouble()
+          : double.tryParse(r['allocated_amount']?.toString() ?? '') ?? 0,
       createdAt: parseTs(r['created_at']),
       updatedAt: parseTs(r['updated_at']),
     );

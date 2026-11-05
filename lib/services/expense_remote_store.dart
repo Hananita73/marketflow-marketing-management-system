@@ -25,7 +25,10 @@ class ExpenseRemoteStore {
       return rows.map<Expense>(_fromRow).toList();
     } catch (e) {
       AdminAlertService.reportStoreFailure(
-          table: _table, operation: 'read', error: e);
+        table: _table,
+        operation: 'read',
+        error: e,
+      );
       return null;
     }
   }
@@ -40,7 +43,10 @@ class ExpenseRemoteStore {
       return true;
     } catch (e) {
       AdminAlertService.reportStoreFailure(
-          table: _table, operation: 'write', error: e);
+        table: _table,
+        operation: 'write',
+        error: e,
+      );
       return false;
     }
   }
@@ -48,15 +54,27 @@ class ExpenseRemoteStore {
   static Future<bool> delete(String id) async {
     if (!SupabaseConfig.isConfigured) return false;
     try {
-      await Supabase.instance.client
+      final rows = await Supabase.instance.client
           .from(_table)
           .delete()
           .eq('id', id)
+          .select('id')
           .timeout(const Duration(seconds: 6));
+      if (rows.isEmpty) {
+        AdminAlertService.reportStoreFailure(
+          table: _table,
+          operation: 'delete',
+          error: StateError('No matching row was deleted.'),
+        );
+        return false;
+      }
       return true;
     } catch (e) {
       AdminAlertService.reportStoreFailure(
-          table: _table, operation: 'delete', error: e);
+        table: _table,
+        operation: 'delete',
+        error: e,
+      );
       return false;
     }
   }
@@ -71,25 +89,29 @@ class ExpenseRemoteStore {
       return true;
     } catch (e) {
       AdminAlertService.reportStoreFailure(
-          table: _table, operation: 'write', error: e);
+        table: _table,
+        operation: 'write',
+        error: e,
+      );
       return false;
     }
   }
 
   static Map<String, dynamic> _toRow(Expense e) => {
-        'id': e.id,
-        'campaign_id': e.campaignId,
-        'budget_id': e.budgetId,
-        'name': e.name,
-        'description': e.description,
-        'category': e.category,
-        'amount': e.amount,
-        'expense_date': _dateToDb(e.expenseDate),
-        'vendor': e.vendor,
-        'payment_status': e.paymentStatus,
-        'status': e.status,
-        'recorded_by': e.recordedBy,
-      };
+    'id': e.id,
+    'campaign_id': e.campaignId,
+    'budget_id': e.budgetId,
+    'company': e.company,
+    'name': e.name,
+    'description': e.description,
+    'category': e.category,
+    'amount': e.amount,
+    'expense_date': _dateToDb(e.expenseDate),
+    'vendor': e.vendor,
+    'payment_status': e.paymentStatus,
+    'status': e.status,
+    'recorded_by': e.recordedBy,
+  };
 
   static Expense _fromRow(Map<String, dynamic> r) {
     DateTime parseTs(dynamic v) =>
@@ -100,13 +122,15 @@ class ExpenseRemoteStore {
       budgetId: r['budget_id']?.toString().isEmpty == true
           ? null
           : r['budget_id']?.toString(),
+      company: r['company']?.toString() ?? '',
       name: r['name']?.toString() ?? '',
       description: r['description']?.toString() ?? '',
       category: r['category']?.toString() ?? 'Other',
       amount: _toDouble(r['amount']),
       expenseDate: _dateFromDb(r['expense_date']) ?? DateTime.now(),
       vendor: r['vendor']?.toString() ?? '',
-      paymentStatus: r['payment_status']?.toString() ?? AppConstants.paymentPending,
+      paymentStatus:
+          r['payment_status']?.toString() ?? AppConstants.paymentPending,
       status: r['status']?.toString() ?? AppConstants.expensePending,
       recordedBy: r['recorded_by']?.toString() ?? '',
       createdAt: parseTs(r['created_at']),

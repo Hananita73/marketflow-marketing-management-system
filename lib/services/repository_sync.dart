@@ -1,8 +1,10 @@
 import '../models/budget.dart';
 import '../models/budget_request.dart';
 import '../models/campaign.dart';
+import '../models/campaign_customer.dart';
 import '../models/content_item.dart';
 import '../models/customer.dart';
+import '../models/expense.dart';
 import '../models/influencer.dart';
 import '../models/lead.dart';
 import '../models/notification_model.dart';
@@ -45,6 +47,11 @@ class RepositorySync {
       safe(() => SmsCampaignRepository.init(force: true)),
       // Budget requests
       safe(() => BudgetRequestRepository.init(force: true)),
+    ]);
+
+    await Future.wait([
+      safe(() => CampaignCustomerRepository.init(force: true)),
+      safe(() => ExpenseRepository.init(force: true)),
     ]);
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:developer' as developer;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/supabase_config.dart';
+import 'admin_alert_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SettingsService
@@ -109,6 +110,8 @@ class SettingsService {
       }
     } catch (e) {
       developer.log('SettingsService.load failed: $e', name: 'SettingsService');
+      AdminAlertService.reportStoreFailure(
+          table: _table, operation: 'read', error: e);
     }
   }
 
@@ -124,6 +127,8 @@ class SettingsService {
       return true;
     } catch (e) {
       developer.log('SettingsService.save failed: $e', name: 'SettingsService');
+      AdminAlertService.reportStoreFailure(
+          table: _table, operation: 'write', error: e);
       return false;
     }
   }

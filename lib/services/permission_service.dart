@@ -63,6 +63,7 @@ class PermissionService {
     PermissionDefinition('lead.edit', 'lead.edit', 'Leads'),
     PermissionDefinition('lead.delete', 'lead.delete', 'Leads'),
     PermissionDefinition('opportunity.view', 'opportunity.view', 'Opportunities'),
+    PermissionDefinition('opportunity.view_all', 'opportunity.view_all', 'Opportunities'),
     PermissionDefinition('opportunity.add', 'opportunity.add', 'Opportunities'),
     PermissionDefinition('opportunity.edit', 'opportunity.edit', 'Opportunities'),
     PermissionDefinition('opportunity.delete', 'opportunity.delete', 'Opportunities'),

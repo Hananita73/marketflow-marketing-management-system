@@ -214,19 +214,24 @@ class AuthService {
   Future<void> adminCreateUser({
     required String email,
     required String fullName,
+    required String password,
     String phone = '',
     required String department,
     required String role,
     required String status,
   }) async {
+    if (password.length < 8) {
+      throw const AppAuthException(
+        'Password must be at least 8 characters long.',
+      );
+    }
     try {
-      // Attempt to call the Edge Function for secure user creation.
-      // This requires a deployed Edge Function: admin-create-user
       await _supabase.functions.invoke(
         'admin-create-user',
         body: {
           'email': email.trim(),
           'full_name': fullName.trim(),
+          'password': password,
           'phone': phone.trim(),
           'department': department.trim().isNotEmpty ? department.trim() : 'General',
           'role': role,
@@ -234,10 +239,57 @@ class AuthService {
         },
       );
     } catch (e) {
-      developer.log('Edge Function call failed: $e — falling back to local', name: 'AuthService');
-      // If the Edge Function is not deployed, we cannot create auth users
-      // from the client. Inform the admin that server-side setup is needed.
-      throw AppAuthException('User invitation failed: $e');
+      developer.log('Admin user creation failed: $e', name: 'AuthService');
+      throw AppAuthException('User creation failed: $e');
+    }
+  }
+
+  /// Admin-only: replaces a user's password through a server-side function.
+  Future<void> adminUpdateUserPassword({
+    required String userId,
+    required String password,
+  }) async {
+    if (!isAdmin) {
+      throw const AppAuthException(
+        'Only Administrators can update user passwords.',
+      );
+    }
+    if (password.length < 8) {
+      throw const AppAuthException(
+        'Password must be at least 8 characters long.',
+      );
+    }
+    try {
+      await _supabase.functions.invoke(
+        'admin-manage-user',
+        body: {
+          'action': 'update_password',
+          'user_id': userId,
+          'password': password,
+        },
+      );
+    } catch (e) {
+      developer.log('Admin password update failed: $e', name: 'AuthService');
+      throw AppAuthException('Password update failed: $e');
+    }
+  }
+
+  /// Admin-only: permanently deletes a user's Auth account and profile.
+  Future<void> adminDeleteUser({required String userId}) async {
+    if (!isAdmin) {
+      throw const AppAuthException('Only Administrators can delete users.');
+    }
+    if (userId == currentUser?.id) {
+      throw const AppAuthException('You cannot delete your own account.');
+    }
+    try {
+      await _supabase.functions.invoke(
+        'admin-manage-user',
+        body: {'action': 'delete_user', 'user_id': userId},
+      );
+    } catch (e) {
+      developer.log('Admin user deletion failed: $e', name: 'AuthService');
+      throw AppAuthException('User deletion failed: $e');
     }
   }
 
@@ -449,11 +501,12 @@ class AuthService {
   /// Checks whether the current user's role grants permission for the
   /// given module with at least [type] access.
   bool hasPermission(String module, PermissionType type) {
+    if (isAdmin) return true;
     return _cachedPermissionKeys.contains(PermissionService.keyFor(module, type));
   }
 
   bool hasAction(String permissionKey) =>
-      _cachedPermissionKeys.contains(permissionKey);
+      isAdmin || _cachedPermissionKeys.contains(permissionKey);
 
   /// Checks if a user is trying to change their own role — this should never
   /// succeed as the role is locked after initial sign-in and can only be changed
@@ -484,13 +537,18 @@ class AuthService {
   // ── Internal ─────────────────────────────────────────────────────────────
 
   Future<void> _cachePermissions(String role) async {
+    if (role == 'admin') {
+      _cachedPermissionKeys = PermissionService.allKeys.toSet();
+      _cachedPermissions = PermissionService.toModulePermissions(
+        _cachedPermissionKeys,
+      );
+      return;
+    }
     try {
       _cachedPermissionKeys = await PermissionService.loadKeysForRole(role);
     } catch (e) {
       PermissionService.reportFailure(e);
-      _cachedPermissionKeys = role == 'admin'
-          ? PermissionService.allKeys.toSet()
-          : <String>{};
+      _cachedPermissionKeys = <String>{};
     }
     _cachedPermissions = PermissionService.toModulePermissions(_cachedPermissionKeys);
   }

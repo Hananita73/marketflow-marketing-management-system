@@ -21,6 +21,7 @@ import 'dart:developer' as developer;
 import 'package:http/http.dart' as http;
 
 import '../config/backend_config.dart';
+import 'persistence_feedback.dart';
 
 class AdminAlertService {
   AdminAlertService._();
@@ -60,6 +61,11 @@ class AdminAlertService {
     required String operation,
     required Object error,
   }) {
+    PersistenceFeedback.reportFailure(
+      table: table,
+      operation: operation,
+      error: error,
+    );
     report(
       event: 'Database $operation failed',
       message: 'Supabase $operation on "$table" failed: $error',

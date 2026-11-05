@@ -110,6 +110,7 @@ class DashboardLiveData {
         icon: Icons.campaign_outlined,
         iconColor: AppColors.primary,
         subtitle: 'started in 30 days',
+        module: 'Campaigns',
       ),
       KpiStat(
         label: 'Total Leads',
@@ -119,6 +120,7 @@ class DashboardLiveData {
         icon: Icons.person_search_outlined,
         iconColor: AppColors.success,
         subtitle: 'new in 30 days',
+        module: 'Leads',
       ),
       KpiStat(
         label: 'Budget Spend',
@@ -138,6 +140,7 @@ class DashboardLiveData {
         icon: Icons.trending_up_outlined,
         iconColor: AppColors.info,
         subtitle: 'campaign average',
+        module: 'Campaigns',
       ),
       KpiStat(
         label: 'Active Campaigns',
@@ -147,6 +150,7 @@ class DashboardLiveData {
         icon: Icons.check_circle_outline,
         iconColor: AppColors.success,
         subtitle: 'currently running',
+        module: 'Campaigns',
       ),
       KpiStat(
         label: 'Conversion Rate',
@@ -156,6 +160,7 @@ class DashboardLiveData {
         icon: Icons.swap_horiz_outlined,
         iconColor: const Color(0xFFBB5CF8),
         subtitle: 'leads converted',
+        module: 'Leads',
       ),
       KpiStat(
         label: 'New Customers',
@@ -166,6 +171,7 @@ class DashboardLiveData {
         icon: Icons.person_add_alt_1_outlined,
         iconColor: AppColors.info,
         subtitle: 'joined in 30 days',
+        module: 'Customers',
       ),
       KpiStat(
         label: 'Avg Lead Score',
@@ -175,6 +181,7 @@ class DashboardLiveData {
         icon: Icons.insights_outlined,
         iconColor: AppColors.warning,
         subtitle: 'across all leads',
+        module: 'Leads',
       ),
     ];
   }

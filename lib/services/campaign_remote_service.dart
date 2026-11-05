@@ -65,15 +65,24 @@ class CampaignRemoteService {
   static Future<bool> delete(String id) async {
     if (!SupabaseConfig.isConfigured) return false;
     try {
-      await Supabase.instance.client
+      final rows = await Supabase.instance.client
           .from(_table)
           .delete()
           .eq('id', id)
+          .select('id')
           .timeout(const Duration(seconds: 6));
+      if (rows.isEmpty) {
+        AdminAlertService.reportStoreFailure(
+          table: _table,
+          operation: 'delete',
+          error: StateError('No matching row was deleted.'),
+        );
+        return false;
+      }
       return true;
     } catch (e) {
       AdminAlertService.reportStoreFailure(
-          table: _table, operation: 'write', error: e);
+          table: _table, operation: 'delete', error: e);
       return false;
     }
   }
