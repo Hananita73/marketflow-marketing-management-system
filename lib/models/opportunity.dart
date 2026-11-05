@@ -1,4 +1,27 @@
 import '../services/entity_remote_stores.dart';
+import '../config/supabase_config.dart';
+
+class OpportunityProgress {
+  final int id;
+  final int opportunityId;
+  final String note;
+  final String stage;
+  final double value;
+  final int probability;
+  final String changedByName;
+  final DateTime createdAt;
+
+  const OpportunityProgress({
+    required this.id,
+    required this.opportunityId,
+    required this.note,
+    required this.stage,
+    required this.value,
+    required this.probability,
+    required this.changedByName,
+    required this.createdAt,
+  });
+}
 
 class Opportunity {
   final int id;
@@ -11,6 +34,12 @@ class Opportunity {
   final String? leadId;
   final String? customerId;
   final DateTime createdAt;
+  final String? createdBy;
+  final String lastProgress;
+  final DateTime? lastProgressAt;
+  final String lastProgressBy;
+  final List<String> followerIds;
+  final List<String> followerNames;
 
   const Opportunity({
     required this.id,
@@ -23,6 +52,12 @@ class Opportunity {
     this.leadId,
     this.customerId,
     required this.createdAt,
+    this.createdBy,
+    this.lastProgress = '',
+    this.lastProgressAt,
+    this.lastProgressBy = '',
+    this.followerIds = const [],
+    this.followerNames = const [],
   });
 
   /// Creates a copy of this Opportunity with the given fields replaced.
@@ -38,6 +73,12 @@ class Opportunity {
     String? leadId,
     String? customerId,
     DateTime? createdAt,
+    String? createdBy,
+    String? lastProgress,
+    DateTime? lastProgressAt,
+    String? lastProgressBy,
+    List<String>? followerIds,
+    List<String>? followerNames,
   }) {
     return Opportunity(
       id: id ?? this.id,
@@ -50,8 +91,17 @@ class Opportunity {
       leadId: leadId ?? this.leadId,
       customerId: customerId ?? this.customerId,
       createdAt: createdAt ?? this.createdAt,
+      createdBy: createdBy ?? this.createdBy,
+      lastProgress: lastProgress ?? this.lastProgress,
+      lastProgressAt: lastProgressAt ?? this.lastProgressAt,
+      lastProgressBy: lastProgressBy ?? this.lastProgressBy,
+      followerIds: followerIds ?? this.followerIds,
+      followerNames: followerNames ?? this.followerNames,
     );
   }
+
+  String get followersLabel =>
+      followerNames.isNotEmpty ? followerNames.join(', ') : owner;
 }
 
 class OpportunityRepository {
@@ -91,17 +141,20 @@ class OpportunityRepository {
   ];
 
   static bool _initialized = false;
+  static final Map<int, List<OpportunityProgress>> _localProgress = {};
 
   static Future<void> init({bool force = false}) async {
     if (_initialized && !force) return;
     _initialized = true;
     final remote = await OpportunityRemoteStore.fetchAll();
     if (remote == null) return;
-    if (remote.isEmpty) {
-      await OpportunityRemoteStore.seed(_opportunities);
-    } else {
-      _opportunities ..clear() ..addAll(remote);
-    }
+    // RLS can legitimately return no visible rows for users who are not
+    // opportunity creators, followers, or view-all administrators. Never
+    // mistake that scoped result for an empty table and try to insert demo
+    // records through the authenticated client.
+    _opportunities
+      ..clear()
+      ..addAll(remote);
   }
 
   static List<Opportunity> getAll() => List<Opportunity>.from(_opportunities);
@@ -117,12 +170,12 @@ class OpportunityRepository {
   static void add(Opportunity opportunity) {
     _opportunities.add(opportunity);
     OpportunityRemoteStore.upsert(opportunity)
-      .then((_) {
-        // Opportunity persisted to database
-      })
-      .onError((_, _) {
-        // Failed to persist - running in offline mode, local data remains valid
-      });
+        .then((_) {
+          // Opportunity persisted to database
+        })
+        .onError((_, _) {
+          // Failed to persist - running in offline mode, local data remains valid
+        });
   }
 
   static void update(Opportunity updated) {
@@ -130,14 +183,58 @@ class OpportunityRepository {
     if (idx != -1) {
       _opportunities[idx] = updated;
       OpportunityRemoteStore.upsert(updated)
-        .then((_) {
-          // Opportunity persisted to database
-        })
-        .onError((_, _) {
-          // Failed to persist - running in offline mode, local data remains valid
-        });
+          .then((_) {
+            // Opportunity persisted to database
+          })
+          .onError((_, _) {
+            // Failed to persist - running in offline mode, local data remains valid
+          });
     }
   }
+
+  static Future<bool> save(
+    Opportunity opportunity, {
+    String? progressNote,
+    List<Map<String, String>> followers = const [],
+  }) async {
+    if (SupabaseConfig.isConfigured &&
+        !await OpportunityRemoteStore.save(
+          opportunity,
+          progressNote: progressNote,
+          followers: followers,
+        )) {
+      return false;
+    }
+    final idx = _opportunities.indexWhere((o) => o.id == opportunity.id);
+    if (idx == -1) {
+      _opportunities.add(opportunity);
+    } else {
+      _opportunities[idx] = opportunity;
+    }
+    if (progressNote != null && progressNote.trim().isNotEmpty) {
+      final progress = OpportunityProgress(
+        id: DateTime.now().microsecondsSinceEpoch,
+        opportunityId: opportunity.id,
+        note: progressNote.trim(),
+        stage: opportunity.stage,
+        value: opportunity.value,
+        probability: opportunity.probability,
+        changedByName: opportunity.lastProgressBy,
+        createdAt: DateTime.now(),
+      );
+      _localProgress.putIfAbsent(opportunity.id, () => []).insert(0, progress);
+    }
+    return true;
+  }
+
+  static Future<List<OpportunityProgress>> fetchProgress(int opportunityId) =>
+      SupabaseConfig.isConfigured
+      ? OpportunityRemoteStore.fetchProgress(opportunityId)
+      : Future.value(
+          List<OpportunityProgress>.from(
+            _localProgress[opportunityId] ?? const [],
+          ),
+        );
 
   /// Updates only the stage of an opportunity, preserving all other fields
   /// including leadId and customerId (fixes data-loss bug where updateStage

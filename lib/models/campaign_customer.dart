@@ -1,4 +1,6 @@
+import '../config/supabase_config.dart';
 import '../core/constants.dart';
+import 'customer.dart';
 import '../services/campaign_customer_remote_store.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19,6 +21,7 @@ class CampaignCustomer {
   final String engagementStatus;
   final String conversionStatus;
   final String notes;
+  final double allocatedAmount;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -30,6 +33,7 @@ class CampaignCustomer {
     this.engagementStatus = AppConstants.engagementPending,
     this.conversionStatus = AppConstants.conversionNotConverted,
     this.notes = '',
+    this.allocatedAmount = 0,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -40,19 +44,20 @@ class CampaignCustomer {
     String? engagementStatus,
     String? conversionStatus,
     String? notes,
+    double? allocatedAmount,
     DateTime? updatedAt,
-  }) =>
-      CampaignCustomer(
-        campaignId: campaignId,
-        customerId: customerId,
-        assignedDate: assignedDate ?? this.assignedDate,
-        participationStatus: participationStatus ?? this.participationStatus,
-        engagementStatus: engagementStatus ?? this.engagementStatus,
-        conversionStatus: conversionStatus ?? this.conversionStatus,
-        notes: notes ?? this.notes,
-        createdAt: createdAt,
-        updatedAt: updatedAt ?? this.updatedAt,
-      );
+  }) => CampaignCustomer(
+    campaignId: campaignId,
+    customerId: customerId,
+    assignedDate: assignedDate ?? this.assignedDate,
+    participationStatus: participationStatus ?? this.participationStatus,
+    engagementStatus: engagementStatus ?? this.engagementStatus,
+    conversionStatus: conversionStatus ?? this.conversionStatus,
+    notes: notes ?? this.notes,
+    allocatedAmount: allocatedAmount ?? this.allocatedAmount,
+    createdAt: createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,34 +94,79 @@ class CampaignCustomerRepository {
       _items.where((a) => a.customerId == customerId).toList();
 
   /// True when the customer is already assigned to the campaign.
-  static bool isAssigned(String campaignId, int customerId) =>
-      _items.any((a) => a.campaignId == campaignId && a.customerId == customerId);
+  static bool isAssigned(String campaignId, int customerId) => _items.any(
+    (a) => a.campaignId == campaignId && a.customerId == customerId,
+  );
+
+  static double allocatedForCompany(String campaignId, String company) =>
+      _items
+          .where((assignment) => assignment.campaignId == campaignId)
+          .where((assignment) {
+            final customer = CustomerRepository.findById(assignment.customerId);
+            if (customer == null) return false;
+            final companyName = customer.company.trim().isEmpty
+                ? customer.name.trim()
+                : customer.company.trim();
+            return companyName == company;
+          })
+          .fold(0, (total, assignment) => total + assignment.allocatedAmount);
 
   /// Creates the customer ↔ campaign association. Returns false (without
   /// duplicating) when the assignment already exists.
-  static bool assign(CampaignCustomer assoc) {
+  static Future<bool> assign(CampaignCustomer assoc) async {
+    if (isAssigned(assoc.campaignId, assoc.customerId)) return false;
+    if (SupabaseConfig.isConfigured &&
+        !await CampaignCustomerRemoteStore.upsert(assoc)) {
+      return false;
+    }
     if (isAssigned(assoc.campaignId, assoc.customerId)) return false;
     _items.add(assoc);
-    CampaignCustomerRemoteStore.upsert(assoc).then((_) {}).onError((_, _) {});
     return true;
   }
 
   /// Updates an existing association (e.g. change participation status).
-  static void update(CampaignCustomer assoc) {
+  static Future<bool> update(CampaignCustomer assoc) async {
     final idx = _items.indexWhere(
-        (a) => a.campaignId == assoc.campaignId && a.customerId == assoc.customerId);
-    if (idx != -1) {
-      _items[idx] = assoc;
-      CampaignCustomerRemoteStore.upsert(assoc).then((_) {}).onError((_, _) {});
+      (a) =>
+          a.campaignId == assoc.campaignId && a.customerId == assoc.customerId,
+    );
+    if (idx == -1) return false;
+    if (SupabaseConfig.isConfigured &&
+        !await CampaignCustomerRemoteStore.upsert(assoc)) {
+      return false;
     }
+    _items[idx] = assoc;
+    return true;
   }
 
   /// Removes ONLY the association (the customer record itself is preserved).
-  static void remove(String campaignId, int customerId) {
+  static Future<bool> remove(String campaignId, int customerId) async {
+    final exists = isAssigned(campaignId, customerId);
+    if (!exists) return false;
+    if (SupabaseConfig.isConfigured &&
+        !await CampaignCustomerRemoteStore.delete(campaignId, customerId)) {
+      return false;
+    }
     _items.removeWhere(
-        (a) => a.campaignId == campaignId && a.customerId == customerId);
-    CampaignCustomerRemoteStore.delete(campaignId, customerId)
-        .then((_) {})
-        .onError((_, _) {});
+      (a) => a.campaignId == campaignId && a.customerId == customerId,
+    );
+    return true;
   }
+}
+
+class CampaignBudgetMath {
+  const CampaignBudgetMath._();
+
+  static double remaining(double allocated, double spent) =>
+      (allocated - spent).clamp(0, double.infinity);
+
+  static bool canRecordExpense({
+    required double allocated,
+    required double alreadySpent,
+    required double expenseAmount,
+  }) =>
+      expenseAmount > 0 &&
+      allocated >= 0 &&
+      alreadySpent >= 0 &&
+      alreadySpent + expenseAmount <= allocated;
 }

@@ -1,3 +1,4 @@
+import '../config/supabase_config.dart';
 import '../core/colors.dart';
 import '../core/constants.dart';
 import '../models/campaign.dart';
@@ -20,6 +21,7 @@ class Expense {
   final String id;
   final String campaignId;
   final String? budgetId;
+  final String company;
   final String name;
   final String description;
   final String category;
@@ -36,6 +38,7 @@ class Expense {
     required this.id,
     required this.campaignId,
     this.budgetId,
+    this.company = '',
     required this.name,
     this.description = '',
     this.category = 'Other',
@@ -51,6 +54,7 @@ class Expense {
 
   Expense copyWith({
     String? budgetId,
+    String? company,
     String? name,
     String? description,
     String? category,
@@ -66,6 +70,7 @@ class Expense {
         id: id,
         campaignId: campaignId,
         budgetId: budgetId ?? this.budgetId,
+        company: company ?? this.company,
         name: name ?? this.name,
         description: description ?? this.description,
         category: category ?? this.category,
@@ -168,17 +173,22 @@ class ExpenseRepository {
     }
   }
 
-  static void add(Expense e) {
+  static Future<bool> add(Expense e) async {
+    if (SupabaseConfig.isConfigured && !await ExpenseRemoteStore.upsert(e)) {
+      return false;
+    }
     _items.add(e);
-    ExpenseRemoteStore.upsert(e).then((_) {}).onError((_, _) {});
+    return true;
   }
 
-  static void update(Expense e) {
+  static Future<bool> update(Expense e) async {
     final idx = _items.indexWhere((x) => x.id == e.id);
-    if (idx != -1) {
-      _items[idx] = e;
-      ExpenseRemoteStore.upsert(e).then((_) {}).onError((_, _) {});
+    if (idx == -1) return false;
+    if (SupabaseConfig.isConfigured && !await ExpenseRemoteStore.upsert(e)) {
+      return false;
     }
+    _items[idx] = e;
+    return true;
   }
 
   static void remove(String id) {
@@ -190,6 +200,15 @@ class ExpenseRepository {
   static double actualExpensesForCampaign(String campaignId) => _items
       .where((e) => e.campaignId == campaignId && e.status != AppConstants.expenseRejected)
       .fold(0, (s, e) => s + e.amount);
+
+  static double spentForCompany(String campaignId, String company) => _items
+      .where(
+        (expense) =>
+            expense.campaignId == campaignId &&
+            expense.company == company &&
+            expense.status != AppConstants.expenseRejected,
+      )
+      .fold(0, (total, expense) => total + expense.amount);
 
   /// Sum of approved expenses only.
   static double approvedExpensesForCampaign(String campaignId) => _items
@@ -205,16 +224,28 @@ class ExpenseRepository {
 
   // ── Approval workflow ──────────────────────────────────────────────────────
 
-  static void approve(String id, String approverName) {
+  static Future<bool> approve(String id, String approverName) async {
     final e = findById(id);
-    if (e == null) return;
-    update(e.copyWith(status: AppConstants.expenseApproved, recordedBy: approverName, updatedAt: DateTime.now()));
+    if (e == null) return false;
+    return update(
+      e.copyWith(
+        status: AppConstants.expenseApproved,
+        recordedBy: approverName,
+        updatedAt: DateTime.now(),
+      ),
+    );
   }
 
-  static void reject(String id, String approverName) {
+  static Future<bool> reject(String id, String approverName) async {
     final e = findById(id);
-    if (e == null) return;
-    update(e.copyWith(status: AppConstants.expenseRejected, recordedBy: approverName, updatedAt: DateTime.now()));
+    if (e == null) return false;
+    return update(
+      e.copyWith(
+        status: AppConstants.expenseRejected,
+        recordedBy: approverName,
+        updatedAt: DateTime.now(),
+      ),
+    );
   }
 
   /// Generates the next expense id (e.g. EXP0007).

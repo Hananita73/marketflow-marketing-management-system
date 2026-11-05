@@ -1,6 +1,7 @@
 import '../core/constants.dart';
 import '../services/admin_alert_service.dart';
 import '../services/entity_remote_stores.dart';
+import 'campaign_customer.dart';
 import 'opportunity.dart';
 import 'customer.dart';
 
@@ -239,7 +240,9 @@ class LeadRepository {
     if (remote.isEmpty) {
       await LeadRemoteStore.seed(_leads);
     } else {
-      _leads ..clear() ..addAll(remote);
+      _leads
+        ..clear()
+        ..addAll(remote);
     }
   }
 
@@ -267,12 +270,12 @@ class LeadRepository {
       },
     );
     LeadRemoteStore.upsert(lead)
-      .then((_) {
-        // Lead persisted to database
-      })
-      .onError((_, _) {
-        // Failed to persist - running in offline mode, local data remains valid
-      });
+        .then((_) {
+          // Lead persisted to database
+        })
+        .onError((_, _) {
+          // Failed to persist - running in offline mode, local data remains valid
+        });
   }
 
   static void update(Lead lead) {
@@ -280,12 +283,12 @@ class LeadRepository {
     if (idx != -1) {
       _leads[idx] = lead;
       LeadRemoteStore.upsert(lead)
-        .then((_) {
-          // Lead persisted to database
-        })
-        .onError((_, _) {
-          // Failed to persist - running in offline mode, local data remains valid
-        });
+          .then((_) {
+            // Lead persisted to database
+          })
+          .onError((_, _) {
+            // Failed to persist - running in offline mode, local data remains valid
+          });
     }
   }
 
@@ -295,7 +298,9 @@ class LeadRepository {
   }
 
   static int nextId() {
-    return _leads.isEmpty ? 1 : _leads.map((l) => l.id).reduce((a, b) => a > b ? a : b) + 1;
+    return _leads.isEmpty
+        ? 1
+        : _leads.map((l) => l.id).reduce((a, b) => a > b ? a : b) + 1;
   }
 
   /// Converts a qualified lead into an Opportunity and optionally a Customer.
@@ -309,7 +314,7 @@ class LeadRepository {
   ///
   /// Returns a Map with the created entity IDs and objects.
   /// Throws if a customer with the same email already exists.
-  static Map<String, dynamic> convertToOpportunityAndCustomer({
+  static Future<Map<String, dynamic>> convertToOpportunityAndCustomer({
     required Lead lead,
     required String campaignId,
     required double opportunityValue,
@@ -319,17 +324,21 @@ class LeadRepository {
     required String customerEmail,
     required String customerSegment,
     required String assignedStaff,
-  }) {
+  }) async {
     // Check for duplicate customer by email among existing customers
     final existingCustomers = CustomerRepository.getAll();
-    final duplicateCustomer = existingCustomers.any((c) => c.email == customerEmail);
+    final duplicateCustomer = existingCustomers.any(
+      (c) => c.email == customerEmail,
+    );
     if (duplicateCustomer) {
       throw Exception('A customer with this email already exists.');
     }
 
     // Check for duplicate opportunity by lead ID
     final existingOpps = OpportunityRepository.getAll();
-    final duplicateOpp = existingOpps.any((o) => o.leadId == lead.id.toString());
+    final duplicateOpp = existingOpps.any(
+      (o) => o.leadId == lead.id.toString(),
+    );
     if (duplicateOpp) {
       throw Exception('An opportunity already exists for this lead.');
     }
@@ -345,7 +354,9 @@ class LeadRepository {
       probability: (lead.score ~/ 20).clamp(0, 100),
       stage: opportunityStage,
       leadId: lead.id.toString(),
-      customerId: convertToCustomer ? null : null, // Set later if customer created
+      customerId: convertToCustomer
+          ? null
+          : null, // Set later if customer created
       createdAt: DateTime.now(),
     );
     OpportunityRepository.add(newOpportunity);
@@ -368,7 +379,21 @@ class LeadRepository {
         opportunityId: newOpportunity.id.toString(),
         campaignId: campaignId,
       );
-      CustomerRepository.add(newCustomer);
+      if (!await CustomerRepository.add(newCustomer)) {
+        throw Exception('Customer could not be saved.');
+      }
+      if (campaignId.isNotEmpty &&
+          !await CampaignCustomerRepository.assign(
+            CampaignCustomer(
+              campaignId: campaignId,
+              customerId: newCustomer.id,
+              assignedDate: DateTime.now(),
+              createdAt: DateTime.now(),
+              updatedAt: DateTime.now(),
+            ),
+          )) {
+        throw Exception('Customer was saved, but campaign assignment failed.');
+      }
     }
 
     // Mark the lead as converted

@@ -1,9 +1,11 @@
 import '../core/constants.dart';
+import '../config/supabase_config.dart';
 import '../services/entity_remote_stores.dart';
 
 class Customer {
   final int id;
   final String name;
+  final String company;
   final String email;
   final String phone;
   final String segment;
@@ -17,6 +19,7 @@ class Customer {
   const Customer({
     required this.id,
     required this.name,
+    this.company = '',
     required this.email,
     required this.phone,
     required this.segment,
@@ -111,29 +114,26 @@ class CustomerRepository {
     }
   }
 
-  static void add(Customer customer) {
+  static Future<bool> add(Customer customer) async {
+    if (SupabaseConfig.isConfigured &&
+        !await CustomerRemoteStore.upsert(customer)) {
+      return false;
+    }
     _customers.add(customer);
-    CustomerRemoteStore.upsert(customer)
-      .then((_) {
-        // Customer persisted to database
-      })
-      .onError((_, _) {
-        // Failed to persist - running in offline mode, local data remains valid
-      });
+    return true;
   }
 
-  static void update(Customer updated) {
+  static Future<bool> update(Customer updated) async {
     final idx = _customers.indexWhere((c) => c.id == updated.id);
     if (idx != -1) {
+      if (SupabaseConfig.isConfigured &&
+          !await CustomerRemoteStore.upsert(updated)) {
+        return false;
+      }
       _customers[idx] = updated;
-      CustomerRemoteStore.upsert(updated)
-        .then((_) {
-          // Customer persisted to database
-        })
-        .onError((_, _) {
-          // Failed to persist - running in offline mode, local data remains valid
-        });
+      return true;
     }
+    return false;
   }
 
   // NOTE: id is an int (Customer.id is int) — comparing it against a String

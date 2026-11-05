@@ -223,11 +223,19 @@ class SmsCampaignRepository {
   static Future<void> _delete(String id) async {
     if (!SupabaseConfig.isConfigured) return;
     try {
-      await Supabase.instance.client
+      final rows = await Supabase.instance.client
           .from(_table)
           .delete()
           .eq('id', id)
+          .select('id')
           .timeout(const Duration(seconds: 6));
+      if (rows.isEmpty) {
+        AdminAlertService.reportStoreFailure(
+          table: _table,
+          operation: 'delete',
+          error: StateError('No matching row was deleted.'),
+        );
+      }
     } catch (e) {
       AdminAlertService.reportStoreFailure(
           table: _table, operation: 'delete', error: e);

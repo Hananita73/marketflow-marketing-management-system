@@ -1,3 +1,4 @@
+import '../config/supabase_config.dart';
 import 'package:flutter/material.dart';
 import '../core/colors.dart';
 import '../core/constants.dart';
@@ -240,39 +241,34 @@ class BudgetRepository {
       .where((b) => b.campaignId == campaignId && b.status == AppConstants.statusDraft)
       .fold(0, (s, b) => s + b.allocated);
 
-  static void add(Budget budget) {
+  static Future<bool> add(Budget budget) async {
+    if (SupabaseConfig.isConfigured && !await BudgetRemoteStore.upsert(budget)) {
+      return false;
+    }
     _budgets.add(budget);
     _alertIfThresholdCrossed(null, budget);
-    // Persist to database (fire-and-forget, fails silently in offline mode)
-    BudgetRemoteStore.upsert(budget)
-      .then((_) {
-        // Budget persisted to database
-      })
-      .onError((_, _) {
-        // Failed to persist - running in offline mode, local data remains valid
-      });
+    return true;
   }
 
-  static void update(Budget budget) {
+  static Future<bool> update(Budget budget) async {
     final idx = _budgets.indexWhere((b) => b.id == budget.id);
-    if (idx != -1) {
-      final previous = _budgets[idx];
-      _budgets[idx] = budget;
-      _alertIfThresholdCrossed(previous, budget);
-      // Persist to database (fire-and-forget, fails silently in offline mode)
-      BudgetRemoteStore.upsert(budget)
-        .then((_) {
-          // Budget persisted to database
-        })
-        .onError((_, _) {
-          // Failed to persist - running in offline mode, local data remains valid
-        });
+    if (idx == -1) return false;
+    if (SupabaseConfig.isConfigured && !await BudgetRemoteStore.upsert(budget)) {
+      return false;
     }
+    final previous = _budgets[idx];
+    _budgets[idx] = budget;
+    _alertIfThresholdCrossed(previous, budget);
+    return true;
   }
 
-  static void remove(String id) {
+  static Future<bool> remove(String id) async {
+    if (!_budgets.any((budget) => budget.id == id)) return false;
+    if (SupabaseConfig.isConfigured && !await BudgetRemoteStore.delete(id)) {
+      return false;
+    }
     _budgets.removeWhere((b) => b.id == id);
-    BudgetRemoteStore.delete(id); // fire-and-forget sync
+    return true;
   }
 
   /// Fraction of an allocated budget already spent (0 when nothing allocated).

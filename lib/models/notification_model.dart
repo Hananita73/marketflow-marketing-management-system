@@ -306,12 +306,23 @@ class NotificationRepository {
   static Future<void> _updateDb(String id, Map<String, dynamic> data) async {
     if (!SupabaseConfig.isConfigured) return;
     try {
-      await Supabase.instance.client
+      final rows = await Supabase.instance.client
           .from(_table)
           .update(data)
           .eq('id', id)
+          .select('id')
           .timeout(const Duration(seconds: 6));
-    } catch (_) {}
+      if (rows.isEmpty) {
+        AdminAlertService.reportStoreFailure(
+          table: _table,
+          operation: 'update',
+          error: StateError('No matching row was updated.'),
+        );
+      }
+    } catch (e) {
+      AdminAlertService.reportStoreFailure(
+          table: _table, operation: 'update', error: e);
+    }
   }
 
   static Future<void> _markAllReadDb() async {
@@ -330,18 +341,32 @@ class NotificationRepository {
             .update({'is_read': true})
             .timeout(const Duration(seconds: 6));
       }
-    } catch (_) {}
+    } catch (e) {
+      AdminAlertService.reportStoreFailure(
+          table: _table, operation: 'update', error: e);
+    }
   }
 
   static Future<void> _deleteDb(String id) async {
     if (!SupabaseConfig.isConfigured) return;
     try {
-      await Supabase.instance.client
+      final rows = await Supabase.instance.client
           .from(_table)
           .delete()
           .eq('id', id)
+          .select('id')
           .timeout(const Duration(seconds: 6));
-    } catch (_) {}
+      if (rows.isEmpty) {
+        AdminAlertService.reportStoreFailure(
+          table: _table,
+          operation: 'delete',
+          error: StateError('No matching row was deleted.'),
+        );
+      }
+    } catch (e) {
+      AdminAlertService.reportStoreFailure(
+          table: _table, operation: 'delete', error: e);
+    }
   }
 
   static Future<void> _pushSeedToDb(String? userId) async {
@@ -351,7 +376,10 @@ class NotificationRepository {
           .from(_table)
           .upsert(_items.map((n) => n.toRow(userId: userId)).toList())
           .timeout(const Duration(seconds: 8));
-    } catch (_) {}
+    } catch (e) {
+      AdminAlertService.reportStoreFailure(
+          table: _table, operation: 'write', error: e);
+    }
   }
 
   /// Loads sample notifications so the app is never empty on first run.
